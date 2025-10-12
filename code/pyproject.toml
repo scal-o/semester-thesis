@@ -1,0 +1,9 @@
+[project]
+name = "semester-thesis"
+version = "0.1.0"
+description = "python-based project to solve the Traffic Assignment Problem (TAP) using Graph Neural Networks (GNNs)"
+requires-python = ">=3.13"
+dependencies = [
+    "aequilibrae>=1.5.0",
+    "openmatrix>=0.3.5.0",
+]
