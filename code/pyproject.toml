@@ -1,10 +1,23 @@
 [project]
-name = "semester-thesis"
+name = "semester"
 version = "0.1.0"
 description = "python-based project to solve the Traffic Assignment Problem (TAP) using Graph Neural Networks (GNNs)"
-requires-python = "~=3.13"
-dependencies = [
-    "aequilibrae>=1.4.3",
-    "dyntapy>=0.2.4",
-    "osmnx==1.9.4",
+readme = "README.md"
+authors = [
+    { name = "scal-o", email = "alex.scalese@virgilio.it" }
 ]
+requires-python = ">=3.13"
+dependencies = [
+    "aequilibrae>=1.5.0",
+    "click>=8.3.0",
+    "eclipse-sumo>=1.24.0",
+    "geopandas>=1.1.1",
+]
+
+[project.scripts]
+create-gpkg = "semester.converters.conv_to_gpkg:create_gpkg"
+
+[build-system]
+requires = ["uv_build>=0.9.5,<0.10.0"]
+build-backend = "uv_build"
+
