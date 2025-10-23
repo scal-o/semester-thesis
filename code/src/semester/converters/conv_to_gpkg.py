@@ -1,3 +1,10 @@
+"""
+Script for TNTP (original) -> GeoPackage conversion.
+
+This script reads TNTP / GeoJSON network files and converts them into a
+single GeoPackage file containing nodes, links, and OD data.
+"""
+
 from pathlib import Path
 
 import click
@@ -5,6 +12,12 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 from shapely.geometry import LineString, Point
+
+
+# --- Network reader functions ---
+# These functions read the network data from the TNTP (nodes, links, OD) and
+# GeoJSON (nodes, fallback) files and return geopandas GeoDataFrames.
+# -----------------------------------------------------------------
 
 
 def read_nodes(network_path: Path, network_name: str) -> gpd.GeoDataFrame:
@@ -187,11 +200,16 @@ def read_od(network_path: Path, nodes_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame
     return od_gdf.drop(columns=["orig_geom", "dest_geom"])
 
 
+# --- CLI Definition ---
+# This section defines the command-line interface using Click.
+# It calls the reader functions and writes the data to a GeoPackage file.
+# -----------------------------------------------------------------
 @click.command()
 @click.argument("network")
 @click.option(
     "--path",
     default="networks",
+    show_default=True,
     help="The base path to the networks directory.",
 )
 def create_gpkg(network: str, path: str = None):
