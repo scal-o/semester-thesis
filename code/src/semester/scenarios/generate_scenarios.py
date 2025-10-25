@@ -232,6 +232,7 @@ class ScenarioGenerator:
             )
 
         print("--- Scenario Generation Complete ---")
+        print(f"Successfylly wrote {len(results)} scenarios to {output_dir}")
 
 
 # --- CLI Definition ---
