@@ -21,6 +21,7 @@ dependencies = [
 [project.scripts]
 create-gpkg = "semester.converters.conv_to_gpkg:create_gpkg"
 generate-scenarios = "semester.scenarios.generate_scenarios:generate_scenarios"
+convert-aequilibrae = "semester.converters.conv_to_aequilibrae:convert_to_omx"
 
 [build-system]
 requires = ["uv_build>=0.9.5,<0.10.0"]
