@@ -1,9 +1,9 @@
-from pathlib import Path
-from contextlib import redirect_stderr
 import io
-
-
+import logging
+from contextlib import redirect_stderr
 from functools import partial
+from pathlib import Path
+
 import click
 import geopandas as gpd
 import pandas as pd
@@ -12,7 +12,6 @@ from aequilibrae.paths import Graph
 from aequilibrae.paths.traffic_assignment import TrafficAssignment
 from aequilibrae.paths.traffic_class import TrafficClass
 from tqdm import tqdm
-import logging
 
 logger = logging.getLogger("aequilibrae")
 logger.setLevel(logging.ERROR)
@@ -23,33 +22,43 @@ CENTROID_FLOW_BLOCKING = {
 }
 
 
-def find_centroids(scenario_gpkg_path: Path):
+def find_centroids(scenario_path: Path):
     """
     Small function to find centroids for a given scenario (from OD matrix).
     """
-    od_df = gpd.read_file(scenario_gpkg_path, layer="od")
+    # load scenario data
+    if not scenario_path.exists():
+        raise FileNotFoundError(f"Scenario '{scenario_path.name}' data not found. ")
+    elif not (scenario_path / "nodes.geojson").exists():
+        raise FileNotFoundError(f"Demand for scenario '{scenario_path.name}' not found. ")
+
+    od_df = gpd.read_file(scenario_path / "od.geojson")
 
     centroids = pd.concat([od_df["origin"], od_df["destination"]])
     centroids = centroids.unique()
     return centroids
 
 
-def load_network(scenario_gpkg_path: Path, block_centroid_flows: False):
+def load_network(scenario_path: Path, block_centroid_flows: False):
     """
     Loader for network graphs.
 
-    Loads graphs from scenario gpkg files.
+    Loads graphs from scenario geojson files.
     """
 
     # load scenario data
-    if not scenario_gpkg_path.exists():
-        raise FileNotFoundError(f"Scenario '{scenario_gpkg_path}' not found. ")
+    if not scenario_path.exists():
+        raise FileNotFoundError(f"Scenario '{scenario_path.name}' data not found. ")
+    elif not (scenario_path / "links.geojson").exists():
+        raise FileNotFoundError(f"Network for scenario '{scenario_path.name}' not found. ")
+    elif not (scenario_path / "nodes.geojson").exists():
+        raise FileNotFoundError(f"Nodes for scenario '{scenario_path.name}' not found. ")
 
     # load network centroids
-    centroids = find_centroids(scenario_gpkg_path)
+    centroids = find_centroids(scenario_path)
 
     # load network data
-    net_df = gpd.read_file(scenario_gpkg_path, layer="links")
+    net_df = gpd.read_file(scenario_path / "links.geojson")
     net_df = net_df[
         [
             "link_id",
@@ -66,7 +75,7 @@ def load_network(scenario_gpkg_path: Path, block_centroid_flows: False):
     net_df = net_df.assign(direction=1)
 
     # load node geometry data
-    nodes = gpd.read_file(scenario_gpkg_path, layer="nodes")
+    nodes = gpd.read_file(scenario_path / "nodes.geojson")
     nodes = nodes[["node_id", "x", "y"]]
     nodes.index = nodes["node_id"].copy()
     nodes = nodes.rename(columns={"x": "lat", "y": "lon"})
@@ -88,7 +97,7 @@ def load_network(scenario_gpkg_path: Path, block_centroid_flows: False):
     return graph
 
 
-def load_matrix(scenario_omx_path: Path):
+def load_matrix(scenario_path: Path):
     """
     Loader for OD matrices.
 
@@ -96,32 +105,34 @@ def load_matrix(scenario_omx_path: Path):
     """
 
     # load scenario data
-    if not scenario_omx_path.exists():
-        raise FileNotFoundError(f"Matrix '{scenario_omx_path}' not found. ")
+    if not scenario_path.exists():
+        raise FileNotFoundError(f"Scenario '{scenario_path.name}' data not found. ")
+    elif not (scenario_path / "od.omx").exists():
+        raise FileNotFoundError(f"Demand matrix for scenario '{scenario_path.name}' not found. ")
 
     # create AequilibraE matrix from OMX
     mat = AequilibraeMatrix()
-    mat.create_from_omx(str(scenario_omx_path))
+    mat.create_from_omx(str(scenario_path / "od.omx"))
     mat.computational_view(["matrix"])
 
     return mat
 
 
-def run_assignment(
-    scenario_name: str, scenarios_dir: Path, output_dir=Path, block_centroid_flows=False
-):
+def run_assignment(scenario_name: str, scenarios_dir: Path, block_centroid_flows=False):
     """
     Loader for a complete Assignment problem.
 
     Loads network and od matrix from a scenario and creates a TrafficAssignment instance.
     """
 
-    # load graph and od matrix
-    scenario_gpkg_path = scenarios_dir / "scenarios_gpkg" / f"{scenario_name}.gpkg"
-    scenario_omx_path = scenarios_dir / "scenarios_omx" / f"{scenario_name}.omx"
+    # load dirs
+    scenario_path = scenarios_dir / "scenarios_geojson" / f"{scenario_name}"
+    output_path = scenarios_dir / "scenarios_sta_results" / f"{scenario_name}"
+    output_path.mkdir(parents=False, exist_ok=False)
 
-    graph = load_network(scenario_gpkg_path, block_centroid_flows)
-    matrix = load_matrix(scenario_omx_path)
+    # load graph and od matrix
+    graph = load_network(scenario_path, block_centroid_flows)
+    matrix = load_matrix(scenario_path)
 
     # create traffic class
     traffic_class = TrafficClass("c", graph, matrix)
@@ -157,8 +168,8 @@ def run_assignment(
     network["congested_time"] = results["Congested_Time_AB"]
 
     # save to file
-    scenario_results_path = output_dir / f"{scenario_name}.parquet"
-    scenario_convergence_path = output_dir / "report" / f"{scenario_name}_convergence.parquet"
+    scenario_results_path = output_path / f"{scenario_name}.parquet"
+    scenario_convergence_path = output_path / f"{scenario_name}_convergence.parquet"
 
     network.to_parquet(scenario_results_path)
     assignment.report().to_parquet(scenario_convergence_path)
@@ -169,18 +180,14 @@ def run_assignment(
 @click.command()
 @click.argument("network")
 @click.option(
-    "--path", default="data", show_default=True, help="The base path to the scenarios directory."
-)
-@click.option(
-    "--results-dir",
-    default="scenarios_sta_results",
+    "--path",
+    default="data",
     show_default=True,
-    help="The name to give to the results directory.",
+    help="The base path to the scenarios directory.",
 )
 def run_sta(
     network: str,
     path: str,
-    results_dir: str,
 ):
     """
     Runs static assignment using AequilibraE.
@@ -195,55 +202,37 @@ def run_sta(
     else:
         path = Path(path)
 
-    if results_dir is None:
-        results_dir = "scenarios_sta_results"
-
     scenarios_path = path / network
-    output_path = scenarios_path / results_dir
-    output_reports_path = output_path / "report"
+    output_path = scenarios_path / "scenarios_sta_results"
 
     # check paths
-
     if not scenarios_path.is_dir():
         raise ValueError(
             f"Scenarios path {scenarios_path} does not exist."
             "Make sure to run the script from the data directory or provide a base path."
         )
 
-    if not (scenarios_path / "scenarios_gpkg").is_dir():
+    if not (scenarios_path / "scenarios_geojson").is_dir():
         raise ValueError(
-            f"Scenarios path {scenarios_path / 'scenarios_gpkg'} does not exist."
-            "Could not find base scenario data."
-        )
-
-    if not (scenarios_path / "scenarios_omx").is_dir():
-        raise ValueError(
-            f"Scenarios path {scenarios_path / 'scenarios_omx'} does not exist."
+            f"Scenarios path {scenarios_path / 'scenarios_geojson'} does not exist."
             "Could not find base scenario data."
         )
 
     if output_path.is_dir():
         raise FileExistsError(
-            f"Output path {output_path} already exists."
+            f"Output path {output_path} already exists.\n"
             "Please remove it before running the assignment."
         )
 
     # create the output directory
     output_path.mkdir()
-    output_reports_path.mkdir()
 
     # find all scenario files
-    scenario_gpkgs = list((scenarios_path / "scenarios_gpkg").glob("scenario_*.gpkg"))
-    scenario_omxs = list((scenarios_path / "scenarios_omx").glob("scenario_*.omx"))
+    scenario_dirs = list((scenarios_path / "scenarios_geojson").glob("scenario_*"))
 
-    if len(scenario_gpkgs) != len(scenario_omxs):
-        raise ValueError(
-            f"Number of scenario gpkgs ({len(scenario_gpkgs)}) does not match number of scenario omxs ({len(scenario_omxs)})"
-        )
+    print(f"Found {len(scenario_dirs)} scenario files to process.")
 
-    print(f"Found {len(scenario_gpkgs)} scenario files to process.")
-
-    scenario_names = [scenario_gpkg.stem for scenario_gpkg in scenario_gpkgs]
+    scenario_names = [scenario.name for scenario in scenario_dirs]
 
     print(f"Starting assignment for {len(scenario_names)} scenario files...")
 
@@ -251,14 +240,17 @@ def run_sta(
     worker_func = partial(
         run_assignment,
         scenarios_dir=scenarios_path,
-        output_dir=output_path,
         block_centroid_flows=CENTROID_FLOW_BLOCKING[network],
     )
 
     # run simulation
     results = [False] * len(scenario_names)
     i = 0
-    for scenario in tqdm(scenario_names):
+    for scenario in tqdm(
+        scenario_names,
+        total=len(scenario_names),
+        desc="Running STA & Writing results",
+    ):
         results[i] = worker_func(scenario)
         i += 1
 

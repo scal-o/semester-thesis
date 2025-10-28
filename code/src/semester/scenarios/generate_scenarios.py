@@ -177,13 +177,14 @@ class ScenarioGenerator:
             mod_links_gdf[attribute] = mod_function(original_series)
 
         # Save scenario files
-        scenario_filename = f"scenario_{scenario_seed:05d}.gpkg"
-        scenario_output_file = output_dir / scenario_filename
+        scenario_filename = f"scenario_{scenario_seed:05d}"
+        scenario_output_dir = output_dir / scenario_filename
+        scenario_output_dir.mkdir(parents=True, exist_ok=False)
 
         try:
-            base_nodes_gdf.to_file(scenario_output_file, layer="nodes", driver="GPKG")
-            mod_links_gdf.to_file(scenario_output_file, layer="links", driver="GPKG")
-            mod_od_gdf.to_file(scenario_output_file, layer="od", driver="GPKG")
+            base_nodes_gdf.to_file(scenario_output_dir / "nodes.geojson", driver="GeoJSON")
+            mod_links_gdf.to_file(scenario_output_dir / "links.geojson", driver="GeoJSON")
+            mod_od_gdf.to_file(scenario_output_dir / "od.geojson", driver="GeoJSON")
 
         except Exception as e:
             raise Exception(f"Error while saving {scenario_filename}: {e}")
@@ -295,9 +296,9 @@ def generate_scenarios(
     network_path = path / network
 
     if output is None:
-        output_path = Path.cwd() / "data" / network / "scenarios_gpkg"
+        output_path = Path.cwd() / "data" / network / "scenarios_geojson"
     else:
-        output_path = Path(output) / network / "scenarios_gpkg"
+        output_path = Path(output) / network / "scenarios_geojson"
 
     if not network_path.is_dir():
         raise ValueError(

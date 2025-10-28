@@ -1,23 +1,21 @@
 """
 Script for GeoPackage -> OpenMatrix (AequilibraE-compatible format) conversion.
 
-This script reads GPKG scenario demand files and converts them into OpenMatrix (.omx) format.
+This script reads geojson scenario demand files and converts them into OpenMatrix (.omx) format.
 """
 
-import sys
-from functools import partial
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
 
 import click
 import geopandas as gpd
-import pandas as pd
 import numpy as np
 import openmatrix as omx
+import pandas as pd
 from tqdm import tqdm
 
 
-def convert_od(scenario_gpkg_path: Path, output_dir: Path) -> bool:
+def convert_od(scenario_dir: Path) -> bool:
     """
     Converts a single scenario's OD table from a .gpkg file into an .omx file.
     Worker function meant to be used with multiprocessor for parallelization.
@@ -29,12 +27,11 @@ def convert_od(scenario_gpkg_path: Path, output_dir: Path) -> bool:
     Returns:
         True on success, False on failure.
     """
-    matrix_name = scenario_gpkg_path.stem  # "scenario_0001"
-    output_file = output_dir / f"{matrix_name}.omx"
+    output_file = scenario_dir / "od.omx"
 
     try:
         # 1. Load data from the single .gpkg file
-        od_df = gpd.read_file(scenario_gpkg_path, layer="od")
+        od_df = gpd.read_file(scenario_dir / "od.geojson")
         od_df = od_df[["origin", "destination", "demand"]]
 
         # 2. Get the sorted zone ids
@@ -61,7 +58,7 @@ def convert_od(scenario_gpkg_path: Path, output_dir: Path) -> bool:
         return True
 
     except Exception as e:
-        print(f"Error processing {scenario_gpkg_path.name}: {e}", file=sys.stderr)
+        print(f"Error processing {scenario_dir.name}: {e}")
         return False
 
 
@@ -98,8 +95,7 @@ def convert_to_omx(
     else:
         path = Path(path)
 
-    scenarios_path = path / network / "scenarios_gpkg"
-    output_path = path / network / "scenarios_omx"
+    scenarios_path = path / network / "scenarios_geojson"
 
     if not scenarios_path.is_dir():
         raise ValueError(
@@ -107,28 +103,12 @@ def convert_to_omx(
             "Make sure to run the script from the data directory or provide a base path."
         )
 
-    if output_path.is_dir():
-        raise FileExistsError(
-            f"Output path {output_path} already exists."
-            "Please remove it before running the conversion."
-        )
-
-    # create the output directory
-    output_path.mkdir(parents=True, exist_ok=False)
-
     # find all scenario files to convert
-    scenario_files = list(scenarios_path.glob("scenario_*.gpkg"))
+    scenario_files = list(scenarios_path.glob("scenario_*"))
     if not scenario_files:
         raise FileNotFoundError(f"No scenario files found in {scenarios_path}")
 
     print(f"Found {len(scenario_files)} scenario files to process.")
-
-    # create partial function
-    worker_func = partial(
-        convert_od,
-        output_dir=output_path,
-    )
-
     print(f"Starting conversion of {len(scenario_files)} files to .omx format...")
 
     # create process pool
@@ -138,7 +118,7 @@ def convert_to_omx(
     with Pool(processes=processes) as pool:
         results = list(
             tqdm(
-                pool.imap_unordered(worker_func, scenario_files),
+                pool.imap_unordered(convert_od, scenario_files),
                 total=len(scenario_files),
                 desc="Processing & Writing .omx",
             )
@@ -146,4 +126,4 @@ def convert_to_omx(
 
     print("--- OpenMatrix File Creation Complete ---")
     success_count = sum(1 for res in results if res)
-    print(f"Successfully wrote {success_count} / {len(scenario_files)} files to: {output_path}")
+    print(f"Successfully wrote {success_count} / {len(scenario_files)} files.")
