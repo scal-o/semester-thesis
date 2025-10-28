@@ -11,6 +11,7 @@ from pathlib import Path
 
 import click
 import geopandas as gpd
+import pandas as pd
 import numpy as np
 import openmatrix as omx
 from tqdm import tqdm
@@ -33,12 +34,12 @@ def convert_od(scenario_gpkg_path: Path, output_dir: Path) -> bool:
 
     try:
         # 1. Load data from the single .gpkg file
-        nodes_gdf = gpd.read_file(scenario_gpkg_path, layer="nodes")
         od_df = gpd.read_file(scenario_gpkg_path, layer="od")
         od_df = od_df[["origin", "destination", "demand"]]
 
-        # 2. Get the canonical zone ordering from the nodes
-        zone_ids = sorted(nodes_gdf["node_id"].unique())
+        # 2. Get the sorted zone ids
+        zone_ids = pd.concat([od_df["origin"], od_df["destination"]])
+        zone_ids = sorted(zone_ids.unique())
 
         # 3. Pivot the long-format OD data into a wide matrix
         od_pivot = od_df.pivot_table(
@@ -103,7 +104,7 @@ def convert_to_omx(
     if not scenarios_path.is_dir():
         raise ValueError(
             f"Scenarios path {scenarios_path} does not exist."
-            "Make sure to run the script from the data directory or provide a base_path."
+            "Make sure to run the script from the data directory or provide a base path."
         )
 
     if output_path.is_dir():
