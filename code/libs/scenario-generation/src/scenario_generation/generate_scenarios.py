@@ -159,22 +159,25 @@ class ScenarioGenerator:
         mod_links_gdf = base_links_gdf.copy()
         mod_od_gdf = base_od_gdf.copy()
 
-        # Apply modification to the od matrix
-        if "demand" in MODIFICATION_RULES:
-            mod_function = MODIFICATION_RULES.pop("demand")
-            original_series = mod_od_gdf["demand"]
-            mod_od_gdf["demand"] = mod_function(original_series)
+        # If the scenario seed is 0, do not apply any modifications but simply
+        # convert the base data to the correct format
+        if scenario_seed != 0:
+            # Apply modification to the od matrix
+            if "demand" in MODIFICATION_RULES:
+                mod_function = MODIFICATION_RULES.pop("demand")
+                original_series = mod_od_gdf["demand"]
+                mod_od_gdf["demand"] = mod_function(original_series)
 
-        # Apply modifications to the links
-        for attribute, mod_function in MODIFICATION_RULES.items():
-            if attribute not in mod_links_gdf.columns:
-                print(f"  Warning: Attribute '{attribute}' not found. Skipping.")
-                continue
+            # Apply modifications to the links
+            for attribute, mod_function in MODIFICATION_RULES.items():
+                if attribute not in mod_links_gdf.columns:
+                    print(f"  Warning: Attribute '{attribute}' not found. Skipping.")
+                    continue
 
-            # skip the special "demand" attribute
+                # skip the special "demand" attribute
 
-            original_series = mod_links_gdf[attribute]
-            mod_links_gdf[attribute] = mod_function(original_series)
+                original_series = mod_links_gdf[attribute]
+                mod_links_gdf[attribute] = mod_function(original_series)
 
         # Save scenario files
         scenario_filename = f"scenario_{scenario_seed:05d}"
@@ -217,7 +220,7 @@ class ScenarioGenerator:
         )
 
         # Generate scenario IDs
-        scenario_ids = range(1, n_scenarios + 1)
+        scenario_ids = range(0, n_scenarios + 1)
 
         # Create a process pool
         if processes is None:
