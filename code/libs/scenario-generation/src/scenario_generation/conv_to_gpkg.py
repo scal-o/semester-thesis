@@ -216,6 +216,7 @@ def create_gpkg(network: str, path: str = None):
     """
     Creates a GeoPackage for a given network by calling the read_* functions.
 
+    \b
     Args:
         network: The name of the network (e.g., 'anaheim').
         path: The base path of the networks directory.

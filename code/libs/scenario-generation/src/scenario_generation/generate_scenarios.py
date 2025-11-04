@@ -276,11 +276,11 @@ def generate_scenarios(
     processes: int = None,
 ):
     """
-    Generates N stochastic scenarios from a network's master GeoPackage file.
+    Generates N stochastic scenarios from a NETWORK's master GeoPackage file.
 
     This script instantiates and runs the ScenarioGenerator class.
 
-    The applied modifications are defined in MODIFICATION_RULES.
+    The applied modifications are defined in a local MODIFICATION_RULES dictionary.
     """
     print("--- Scenario Generation ---")
     print(f"Network: {network}")

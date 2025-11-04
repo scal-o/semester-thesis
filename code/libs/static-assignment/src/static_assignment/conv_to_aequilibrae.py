@@ -83,7 +83,7 @@ def convert_to_omx(
     processes: int = None,
 ):
     """
-    Converts each .gpkg scenario OD table into its own .omx file.
+    Converts each .gpkg scenario OD table for NETWORK into its own .omx file.
     """
     print("--- OpenMatrix conversion ---")
     print(f"Network: {network}")

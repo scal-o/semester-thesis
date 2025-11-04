@@ -190,7 +190,7 @@ def run_sta(
     path: str,
 ):
     """
-    Runs static assignment using AequilibraE.
+    Runs static assignment using AequilibraE for all of NETWORK's scenarios.
     """
     print("--- Running static traffic assignment ---")
     print(f"Network: {network}")
