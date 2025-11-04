@@ -200,6 +200,29 @@ def read_od(network_path: Path, nodes_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame
     return od_gdf.drop(columns=["orig_geom", "dest_geom"])
 
 
+def read_flows(network_path: Path):
+    """
+    Reads best-known flow data from tntp.
+    """
+    # reading file
+    flows_path = network_path / "flows.tntp"
+    print(f"Reading flows from {flows_path}")
+
+    skiprows = 1
+    flows_df = pd.read_csv(
+        flows_path,
+        skiprows=skiprows,
+        sep="\t",
+        header=None,
+        names=["a_node", "b_node", "flow", "cost"],
+    )
+
+    flows_df.dropna(how="all", inplace=True)
+    flows_gdf = gpd.GeoDataFrame(flows_df, geometry=None)
+
+    return flows_gdf
+
+
 # --- CLI Definition ---
 # This section defines the command-line interface using Click.
 # It calls the reader functions and writes the data to a GeoPackage file.
@@ -243,11 +266,13 @@ def create_gpkg(network: str, path: str = None):
     nodes_gdf = read_nodes(network_path, network)
     links_gdf = read_links(network_path, nodes_gdf)
     od_gdf = read_od(network_path, nodes_gdf)
+    flows_gdf = read_flows(network_path)
 
     # writing to geopackage
     print(f"Writing to GeoPackage: {output_path}")
     nodes_gdf.to_file(output_path, layer="nodes", driver="GPKG")
     links_gdf.to_file(output_path, layer="links", driver="GPKG")
     od_gdf.to_file(output_path, layer="od", driver="GPKG")
+    flows_gdf.to_file(output_path, layer="flows", driver="GPKG")
 
     print("\nDone.")

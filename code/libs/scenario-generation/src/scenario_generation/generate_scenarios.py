@@ -109,6 +109,7 @@ class ScenarioGenerator:
             f"- {len(self.base_nodes_gdf)} master nodes\n"
             f"- {len(self.base_links_gdf)} master links\n"
             f"- {len(self.base_od_gdf)} master OD pairs\n"
+            f"- {len(self.base_flows_gdf)} master flows\n"
         )
 
     def _load_master_data(self) -> None:
@@ -125,6 +126,11 @@ class ScenarioGenerator:
                 self.master_gpkg_file, layer="links"
             )
             self.base_od_gdf: gpd.GeoDataFrame = gpd.read_file(self.master_gpkg_file, layer="od")
+            self.base_flows_gdf: gpd.GeoDataFrame = gpd.read_file(
+                self.master_gpkg_file, layer="flows"
+            )
+
+            self.base_flows_gdf = gpd.GeoDataFrame(self.base_flows_gdf, geometry=None)
 
         except Exception as e:
             raise Exception(
@@ -138,6 +144,7 @@ class ScenarioGenerator:
         base_nodes_gdf: gpd.GeoDataFrame,
         base_links_gdf: gpd.GeoDataFrame,
         base_od_gdf: gpd.GeoDataFrame,
+        base_flows_gdf: gpd.GeoDataFrame,
         output_dir: Path,
     ) -> Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
         """
@@ -174,8 +181,6 @@ class ScenarioGenerator:
                     print(f"  Warning: Attribute '{attribute}' not found. Skipping.")
                     continue
 
-                # skip the special "demand" attribute
-
                 original_series = mod_links_gdf[attribute]
                 mod_links_gdf[attribute] = mod_function(original_series)
 
@@ -188,6 +193,9 @@ class ScenarioGenerator:
             base_nodes_gdf.to_file(scenario_output_dir / "nodes.geojson", driver="GeoJSON")
             mod_links_gdf.to_file(scenario_output_dir / "links.geojson", driver="GeoJSON")
             mod_od_gdf.to_file(scenario_output_dir / "od.geojson", driver="GeoJSON")
+
+            if scenario_seed == 0:
+                base_flows_gdf.to_file(scenario_output_dir / "flows.geojson", driver="GeoJSON")
 
         except Exception as e:
             raise Exception(f"Error while saving {scenario_filename}: {e}")
@@ -216,6 +224,7 @@ class ScenarioGenerator:
             base_nodes_gdf=self.base_nodes_gdf,
             base_links_gdf=self.base_links_gdf,
             base_od_gdf=self.base_od_gdf,
+            base_flows_gdf=self.base_flows_gdf,
             output_dir=output_dir,
         )
 
