@@ -8,7 +8,7 @@ import geopandas as gpd
 import click
 
 
-@click.command()
+@click.command("test")
 @click.argument("network")
 @click.option(
     "--path",

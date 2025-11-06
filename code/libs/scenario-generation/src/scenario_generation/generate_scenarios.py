@@ -251,7 +251,7 @@ class ScenarioGenerator:
 # --- CLI Definition ---
 # This section defines the command-line interface using Click.
 # -----------------------------------------------------------------
-@click.command()
+@click.command("generate")
 @click.argument("network")
 @click.option(
     "--path",

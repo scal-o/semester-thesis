@@ -62,7 +62,7 @@ def convert_od(scenario_dir: Path) -> bool:
         return False
 
 
-@click.command()
+@click.command("convert-scenarios")
 @click.argument("network")
 @click.option(
     "--path",
@@ -83,7 +83,7 @@ def convert_to_omx(
     processes: int = None,
 ):
     """
-    Converts each .gpkg scenario OD table for NETWORK into its own .omx file.
+    Converts each .geojson scenario OD table for NETWORK into its own .omx file.
     """
     print("--- OpenMatrix conversion ---")
     print(f"Network: {network}")

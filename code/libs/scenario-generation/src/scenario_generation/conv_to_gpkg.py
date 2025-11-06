@@ -227,7 +227,7 @@ def read_flows(network_path: Path):
 # This section defines the command-line interface using Click.
 # It calls the reader functions and writes the data to a GeoPackage file.
 # -----------------------------------------------------------------
-@click.command()
+@click.command("initialize")
 @click.argument("network")
 @click.option(
     "--path",

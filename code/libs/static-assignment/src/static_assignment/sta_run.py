@@ -177,7 +177,7 @@ def run_assignment(scenario_name: str, scenarios_dir: Path, block_centroid_flows
     return True
 
 
-@click.command()
+@click.command("run")
 @click.argument("network")
 @click.option(
     "--path",

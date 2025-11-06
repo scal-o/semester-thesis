@@ -20,9 +20,8 @@ dependencies = [
 ]
 
 [project.scripts]
-convert-aequilibrae = "static_assignment.conv_to_aequilibrae:convert_to_omx"
-run-sta = "static_assignment.run_sta:run_sta"
-test-sta = "static_assignment.test_sta:test_sta"
+sta = "static_assignment.sta:cli"
+
 
 [build-system]
 requires = ["uv_build>=0.9.7,<0.10.0"]

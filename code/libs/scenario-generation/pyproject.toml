@@ -17,8 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-create-gpkg = "scenario_generation.conv_to_gpkg:create_gpkg"
-generate-scenarios = "scenario_generation.generate_scenarios:generate_scenarios"
+scenarios = "scenario_generation.scenarios:cli"
 
 [build-system]
 requires = ["uv_build>=0.9.7,<0.10.0"]
