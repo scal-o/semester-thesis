@@ -240,13 +240,12 @@ class STADataset(Dataset):
 
         print("--- Dataset Processing Complete ---")
 
-    @property
     def len(self) -> int:
         return len(self.processed_file_names)
 
     def get(self, idx: int) -> HeteroData:
         scenario = self.scenario_names[idx]
-        data = torch.load(Path(self.processed_dir) / f"{scenario}.pt")
+        data = torch.load(Path(self.processed_dir) / f"{scenario}.pt", weights_only=False)
         return data
 
 
