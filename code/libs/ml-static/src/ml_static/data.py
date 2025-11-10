@@ -222,13 +222,11 @@ class STADataset(Dataset):
 
             # append real edge data
             data["nodes", "real", "nodes"].edge_index = edges
-            data["nodes", "real", "nodes"].edge_attrs = edge_features
+            data["nodes", "real", "nodes"].edge_features = edge_features
+            data["nodes", "real", "nodes"].edge_labels = edge_labels
 
             # append virtual edge data
             data["nodes", "virtual", "nodes"].edge_index = virtual_edges
-
-            # append labels
-            data.y = edge_labels
 
             # save data to disk
             try:
@@ -289,4 +287,4 @@ def create_dataset(
         print("--- Dataset Creation Complete ---")
 
     except Exception as e:
-        raise Exception(f"Scenario generation failed. An unexpected error occurred: {e}") from e
+        raise Exception(f"Dataset generation failed. An unexpected error occurred: {e}") from e
