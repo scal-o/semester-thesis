@@ -1,0 +1,20 @@
+model:
+  name: "Hetero GCNConv 2L"
+  hidden_channels: 32
+  output_channels: 16
+
+training:
+  epochs: 50
+  batch_size: 32
+  target: "edge_labels"
+
+optimizer: 
+  type: "adam"
+  learning_rate: 1.0e-3
+
+loss: 
+  type: "mse"
+
+dataset: 
+  name: "sioux_falls"
+  path: "data"

@@ -99,7 +99,7 @@ def run_training(config: Config, check_run: bool = False) -> None:
     "-c",
     "--config",
     default=None,
-    help="Path to YAML configuration file. Defaults to run_params.yaml.",
+    help="Path to YAML configuration file. Defaults to conf_run.yaml.",
 )
 @click.option(
     "--check-run",
