@@ -18,8 +18,9 @@ class MLPRegressor(nn.Module):
         # concatenate: origin + destination features + connecting edge features
         z = torch.cat([x[origin], x[destination], edge_features], dim=1)
         z = self.lin1(z)
-        z = F.relu(z)
+        z = F.leaky_relu(z)
         z = self.lin2(z)
+        z = F.leaky_relu(z)
         return z.view(-1)
 
 
@@ -31,7 +32,7 @@ class Conv(nn.Module):
 
     def forward(self, x, edge_index):
         x = self.conv1(x, edge_index)
-        x = F.relu(x)
+        x = F.leaky_relu(x)
         x = self.conv2(x, edge_index)
         return x
 
@@ -52,24 +53,3 @@ class GNN(nn.Module):
         z = self.mlp(g["nodes"], graph["real"].edge_index, graph["real"].edge_features)
 
         return z
-
-
-def train(model, optimizer, criterion, graph):
-    model.train()
-    optimizer.zero_grad()
-
-    pred = model(graph)
-    loss = criterion(pred, graph["real"].edge_labels)
-    loss.backward()
-    optimizer.step()
-
-    return loss.item()
-
-
-def validate(model, criterion, graph):
-    model.eval()
-    with torch.no_grad():
-        pred = model(graph)
-        loss = criterion(pred, graph["real"].edge_labels)
-
-    return loss.item()
