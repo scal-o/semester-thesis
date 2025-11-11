@@ -27,23 +27,21 @@ class MLflowtracker:
         # retrieve configs
         # run_conf contains mlflow configs (tracking uri and experiment name)
         # run_params contains model parameters (name, epochs, loss, optimizer)
-        with open(Path(__file__).parent / "run_conf.yaml") as f:
+        with open(Path(__file__).parent / "conf_mlflow.yaml") as f:
             config = yaml.safe_load(f)
-        with open(Path(__file__).parent / "run_params.yaml") as f:
-            params = yaml.safe_load(f)
 
         # set uri and experiment
         mlflow.set_tracking_uri(config["tracking_uri"])
         mlflow.set_experiment(config["experiment"])
 
-        # pre-allocate list length
-        self.train_losses = list(range(params["epochs"]))
-        self.val_losses = list(range(params["epochs"]))
+        # create losses lists
+        self.train_losses = list()
+        self.val_losses = list()
 
     def log_epoch(self, epoch, train_loss, val_loss):
         """Log metrics for a single epoch"""
-        self.train_losses[epoch - 1] = train_loss
-        self.val_losses[epoch - 1] = val_loss
+        self.train_losses.append(train_loss)
+        self.val_losses.append(val_loss)
 
         mlflow.log_metrics(
             {
@@ -82,15 +80,9 @@ class MLflowtracker:
         with tempfile.TemporaryDirectory() as dirname:
             tempdir = Path(dirname)
 
-            # save source code
-            shutil.copyfile(code_dir / "data.py", tempdir / "data.py")
-            shutil.copyfile(code_dir / "model.py", tempdir / "model.py")
-            shutil.copyfile(code_dir / "run.py", tempdir / "run.py")
-            shutil.copyfile(code_dir / "tracker.py", tempdir / "tracker.py")
-
-            # save config
-            shutil.copyfile(code_dir / "run_conf.yaml", tempdir / "run_conf.yaml")
-            shutil.copyfile(code_dir / "run_params.yaml", tempdir / "run_params.yaml")
+            # save source code and config
+            # TODO: if passing custom config to the cli, copy that instead of the default
+            shutil.copytree(code_dir, tempdir, dirs_exist_ok=True)
 
             # save model weights
             torch.save(model.state_dict(), tempdir / "model.pt")
