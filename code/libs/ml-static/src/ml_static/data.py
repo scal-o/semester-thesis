@@ -160,6 +160,10 @@ class STADataset(Dataset):
             full_mat = full_mat.reindex(
                 index=range(0, len(node_df)), columns=range(0, len(node_df)), fill_value=0.0
             )
+
+            # scale demand matrix between 0 and 100
+            full_mat = (full_mat - full_mat.min()) / (full_mat.max() - full_mat.min()) * 100
+
             full_mat = full_mat.values
 
             # concatenate node coordinates and od matrix to create node features
@@ -183,6 +187,11 @@ class STADataset(Dataset):
             # extract edge features and labels
             edge_features = link_df[["capacity", "free_flow_time"]].values
             edge_labels = link_df["volume_capacity_ratio"].values
+
+            # standardize edge features (z-score normalization)
+            edge_features = (edge_features - edge_features.mean(axis=0)) / (
+                edge_features.std(axis=0)
+            )
 
             # convert to tensors
             edges = torch.tensor(edges, dtype=torch.long).t()
