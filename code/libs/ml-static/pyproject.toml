@@ -11,6 +11,7 @@ dependencies = [
     "geopandas>=1.1.1",
     "mlflow>=3.5.1",
     "openmatrix>=0.3.5.0",
+    "tabulate>=0.9.0",
     "torch==2.8.0",
     "torch-geometric==2.7",
     "torchaudio==2.8.0",
@@ -19,6 +20,7 @@ dependencies = [
 
 [project.scripts]
 create-dataset = "ml_static.data:create_dataset"
+train = "ml_static.run:train_model"
 
 [build-system]
 requires = ["uv_build>=0.9.7,<0.10.0"]
@@ -29,5 +31,4 @@ dev = [
     "folium>=0.20.0",
     "mapclassify>=2.10.0",
     "matplotlib>=3.10.7",
-    "tabulate>=0.9.0",
 ]
