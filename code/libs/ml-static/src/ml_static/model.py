@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch_geometric.nn as pygnn
 from torch_geometric.data import HeteroData
+
+from ml_static.encoders import REncoder, VEncoder
 
 
 class MLPRegressor(nn.Module):
@@ -24,32 +25,26 @@ class MLPRegressor(nn.Module):
         return z.view(-1)
 
 
-class Conv(nn.Module):
-    def __init__(self, input_channels, hidden_channels, out_channels):
-        super().__init__()
-        self.conv1 = pygnn.GCNConv(input_channels, hidden_channels)
-        self.conv2 = pygnn.GCNConv(hidden_channels, out_channels)
-
-    def forward(self, x, edge_index):
-        x = self.conv1(x, edge_index)
-        x = F.leaky_relu(x)
-        x = self.conv2(x, edge_index)
-        return x
-
-
 class GNN(nn.Module):
     def __init__(self, data_sample, hidden_channels, out_channels):
         super().__init__()
 
-        self.graph_conv = Conv(data_sample.num_features["nodes"], hidden_channels, out_channels)
-        self.graph_conv = pygnn.to_hetero(self.graph_conv, data_sample.metadata(), aggr="sum")
-        self.mlp = MLPRegressor(out_channels * 2 + 2, out_channels)
+        self.vencoder1 = VEncoder(data_sample.num_features["nodes"], hidden_channels, 2)
+        self.vencoder2 = VEncoder(hidden_channels, hidden_channels, 2)
+
+        self.rencoder1 = REncoder(hidden_channels, hidden_channels, 2)
+        self.rencoder2 = REncoder(hidden_channels, hidden_channels, 2)
+
+        self.mlp = MLPRegressor(hidden_channels * 2 + 2, out_channels)
 
     def forward(self, graph: HeteroData):
-        # pass graph features as dict to the HeteroGNN
-        g = self.graph_conv(graph.x_dict, graph.edge_index_dict)
+        # apply transformer layers to get node embeddings
+        g = self.vencoder1(graph.x_dict["nodes"], graph["virtual"].edge_index)
+        g = self.vencoder2(g, graph["virtual"].edge_index)
+        g = self.rencoder1(g, graph["real"].edge_index, graph["real"].edge_features)
+        g = self.rencoder2(g, graph["real"].edge_index, graph["real"].edge_features)
 
         # create link predictions with the MLP
-        z = self.mlp(g["nodes"], graph["real"].edge_index, graph["real"].edge_features)
+        z = self.mlp(g, graph["real"].edge_index, graph["real"].edge_features)
 
         return z
