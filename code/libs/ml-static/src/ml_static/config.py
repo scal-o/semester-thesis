@@ -1,3 +1,4 @@
+import random
 from pathlib import Path
 from typing import Callable
 
@@ -143,3 +144,8 @@ class Config:
     def raw_config(self) -> dict:
         """Get raw configuration dictionary for logging."""
         return self._config
+
+    @property
+    def seed(self) -> int:
+        """Get random seed."""
+        return self._config.get("training", {}).get("seed", random.randint(0, 9999))
