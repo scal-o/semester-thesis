@@ -15,15 +15,17 @@ from ml_static.tracker import MLflowtracker
 from ml_static.training import train, validate
 
 
-def run_training(config: Config, check_run: bool = False) -> None:
+def run_training(config: Config, check_run: bool = False) -> tuple:
     """
     Execute training run.
 
     Args:
         config: Configuration object containing the training parameters.
-        sample_run: Bool defining whether to run a "check" run (i.e. using only
+        check_run: Bool defining whether to run a "check" run (i.e. using only
             one data sample, to check if the model converges or not)
 
+    Returns:
+        Tuple of (model, dataset, tt_train, tt_val, tt_test)
     """
 
     # set device
@@ -157,9 +159,12 @@ def run_training(config: Config, check_run: bool = False) -> None:
 def train_model(
     config: str,
     check_run: bool = False,
-) -> None:
+) -> tuple:
     """
     Train a GNN model on static traffic assignment data.
+
+    Returns:
+        Tuple of (model, dataset, tt_train, tt_val, tt_test)
     """
     print("--- Training GNN Model ---")
 
@@ -182,12 +187,21 @@ def train_model(
 
     # run training
     try:
-        run_training(config, check_run=check_run)
+        model, dataset, tt_train, tt_val, tt_test = run_training(config, check_run=check_run)
         print("--- Training Complete ---")
+        return model, dataset, tt_train, tt_val, tt_test
     except Exception as e:
         raise Exception(f"Training failed. An unexpected error occurred: {e}") from e
 
 
 # run script if not called from cli entrypoint
 if __name__ == "__main__":
-    train_model()
+    global results
+    model, dataset, tt_train, tt_val, tt_test = train_model(["--check-run"])
+    results = {
+        "model": model,
+        "dataset": dataset,
+        "tt_train": tt_train,
+        "tt_val": tt_val,
+        "tt_test": tt_test,
+    }
