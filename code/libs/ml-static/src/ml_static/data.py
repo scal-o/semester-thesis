@@ -158,7 +158,9 @@ class STADataset(Dataset):
             # get full od matrix (od_mat only contains centrid data)
             full_mat = pd.DataFrame(od_mat)
             full_mat = full_mat.reindex(
-                index=range(0, len(node_df)), columns=range(0, len(node_df)), fill_value=0.0
+                index=range(0, len(node_df)),
+                columns=range(0, len(node_df)),
+                fill_value=0.0,
             )
 
             # scale demand matrix between 0 and 100
@@ -249,6 +251,31 @@ class STADataset(Dataset):
 
     def len(self) -> int:
         return len(self.processed_file_names)
+
+    def __getitem__(self, idx):
+        """
+        Handles indexing and slicing of the dataset.
+        If an integer is passed, it returns a single data object.
+        If a slice or list of indices is passed, it returns a `Subset` object
+        with the sliced custom attributes attached.
+        """
+        if isinstance(idx, int):
+            return self.get(idx)
+
+        # When a slice or list is passed, the base class returns a Subset
+        subset = super().__getitem__(idx)
+
+        # We monkey-patch the subset to include our sliced custom attributes,
+        # so it behaves like a normal STADataset for our purposes.
+        subset.scenario_names = [self.scenario_names[i] for i in subset.indices()]
+        subset.scenario_paths = [self.scenario_paths[i] for i in subset.indices()]
+        subset.result_paths = [self.result_paths[i] for i in subset.indices()]
+
+        # Add other necessary attributes for plotting and data access
+        subset.link_data_dir = self.link_data_dir
+        subset.node_data_dir = self.node_data_dir
+
+        return subset
 
     def get(self, idx: int) -> HeteroData:
         scenario = self.scenario_names[idx]
