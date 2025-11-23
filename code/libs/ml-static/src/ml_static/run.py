@@ -3,14 +3,22 @@ from pathlib import Path
 import click
 import mlflow
 import numpy as np
+import pandas as pd
 import torch
 import torch_geometric as pg
+from tabulate import tabulate
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 
 from ml_static.config import Config
 from ml_static.data import STADataset
 from ml_static.model import GNN
+from ml_static.reporting import (
+    compute_statistics,
+    generate_prediction_df,
+    plot_performance_diagnostics,
+    plot_predictions,
+)
 from ml_static.tracker import MLflowtracker
 from ml_static.training import train, validate
 
@@ -25,7 +33,7 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
             one data sample, to check if the model converges or not)
 
     Returns:
-        Tuple of (model, dataset, tt_train, tt_val, tt_test)
+        Tuple of (model, dataset, train_loader, val_loader, test_loader, device, target_getter, tracker, tt_train, tt_val, tt_test)
     """
 
     # set device
@@ -43,15 +51,21 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
     tt_val = (tt >= 0.7) & (tt < 0.9)
     tt_test = tt >= 0.9
 
-    train_dataset = dataset[tt_train]
-    val_dataset = dataset[tt_val]
-    test_dataset = dataset[tt_test]
+    train_dataset_split = dataset[tt_train]
+    val_dataset_split = dataset[tt_val]
+    test_dataset_split = dataset[tt_test]
 
-    train_dataset = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=False)
-    val_dataset = DataLoader(val_dataset, batch_size=len(val_dataset), shuffle=False)
-    test_dataset = DataLoader(test_dataset, batch_size=len(test_dataset), shuffle=False)
+    train_loader = DataLoader(
+        train_dataset_split, batch_size=config.batch_size, shuffle=False
+    )
+    val_loader = DataLoader(
+        val_dataset_split, batch_size=len(val_dataset_split), shuffle=False
+    )
+    test_loader = DataLoader(
+        test_dataset_split, batch_size=len(test_dataset_split), shuffle=False
+    )
 
-    data_sample = next(iter(train_dataset))
+    data_sample = next(iter(train_loader))
 
     # define data iterator
     if check_run:
@@ -60,11 +74,13 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
         run_description = "Check run (overfitting)"
     else:
         # for a full run, iterate through all dataset batches
-        data_iterator = train_dataset
+        data_iterator = train_loader
         run_description = "Training"
 
     # define model
-    model = GNN(data_sample, config.hidden_channels, config.output_channels).to(device)
+    model = GNN(data_sample, config.hidden_channels, config.output_channels).to(
+        device
+    )
 
     # define loss and optimizer
     loss = config.get_loss_function()
@@ -104,7 +120,7 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
                 e_train_loss += train_loss
                 train_batches += 1
 
-            for data in val_dataset:
+            for data in val_loader:
                 data = data.to(device)
                 val_loss = validate(model, loss, data, target_getter)
                 e_val_loss += val_loss
@@ -125,7 +141,7 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
         # test phase
         test_loss = 0.0
         test_batches = 0
-        for data in test_dataset:
+        for data in test_loader:
             data = data.to(device)
             loss_out = validate(model, loss, data, target_getter)
             test_loss += loss_out
@@ -138,11 +154,21 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
         tracker.log_training_curves()
         tracker.log_model(model, config.model_name, data)
 
-        return model, dataset, tt_train, tt_val, tt_test
+        return (
+            model,
+            dataset,
+            train_loader,
+            val_loader,
+            test_loader,
+            device,
+            target_getter,
+            tracker,
+            tt_train,
+            tt_val,
+            tt_test,
+        )
 
 
-# with open(Path(__file__).parent / "run_params.yaml") as f:
-#     params = yaml.safe_load(f)
 @click.command("train")
 @click.option(
     "-c",
@@ -157,7 +183,7 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
     help="Run a check run on a single data sample to verify model convergence.",
 )
 def train_model(
-    config: str,
+    config: str = None,
     check_run: bool = False,
 ) -> tuple:
     """
@@ -187,17 +213,57 @@ def train_model(
 
     # run training
     try:
-        model, dataset, tt_train, tt_val, tt_test = run_training(config, check_run=check_run)
+        (
+            model,
+            dataset,
+            train_loader,
+            val_loader,
+            test_loader,
+            device,
+            target_getter,
+            tracker,
+            tt_train,
+            tt_val,
+            tt_test,
+        ) = run_training(config, check_run=check_run)
         print("--- Training Complete ---")
+
+        print("--- Performance Statistics ---")
+        stats_dfs = []
+        for name, loader in [
+            ("Train", train_loader),
+            ("Validation", val_loader),
+            ("Test", test_loader),
+        ]:
+            pred_df = generate_prediction_df(
+                model, loader, device, target_getter
+            )
+            stats_df = compute_statistics(pred_df)
+            stats_df["Dataset"] = name
+            stats_dfs.append(stats_df)
+
+            # Generate and log diagnostic plots
+            fig = plot_performance_diagnostics(pred_df, name)
+            tracker.log_performance_report(stats_df, fig, name)
+
+        # format and print the table
+        result_df = pd.concat(stats_dfs).set_index("Dataset")
+        print(tabulate(result_df, headers="keys", tablefmt="psql"))
+
         return model, dataset, tt_train, tt_val, tt_test
     except Exception as e:
-        raise Exception(f"Training failed. An unexpected error occurred: {e}") from e
+        raise Exception(
+            f"Training failed. An unexpected error occurred: {e}"
+        ) from e
 
 
 # run script if not called from cli entrypoint
 if __name__ == "__main__":
-    global results
-    model, dataset, tt_train, tt_val, tt_test = train_model(["--check-run"])
+    # When running interactively, we call the underlying function directly
+    # to avoid click's command-line handling, which can exit the script.
+    model, dataset, tt_train, tt_val, tt_test = train_model.callback(
+        config=None, check_run=False, plot_scenario=None
+    )
     results = {
         "model": model,
         "dataset": dataset,
