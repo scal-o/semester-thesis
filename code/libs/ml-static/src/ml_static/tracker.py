@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import pandas as pd
 import mlflow
 import numpy as np
 import torch
@@ -95,6 +96,26 @@ class MLflowtracker:
 
         # save and log plot
         mlflow.log_figure(fig, "plots/training_curves.png")
+        plt.close(fig)
+
+    def log_performance_report(
+        self, stats_df: pd.DataFrame, fig: plt.Figure, dataset_name: str
+    ) -> None:
+        """
+        Logs performance statistics as a dictionary artifact and diagnostic
+        plots as a figure artifact to MLflow.
+
+        Args:
+            stats_df: DataFrame with performance metrics.
+            fig: Figure object with diagnostic plots.
+            dataset_name: Name of the dataset split (e.g., "Test").
+        """
+        # Log metrics as a dictionary artifact
+        stats_dict = {dataset_name: stats_df.to_dict("records")[0]}
+        mlflow.log_dict(stats_dict, f"performance_stats/{dataset_name}_stats.json")
+
+        # Log figure artifact
+        mlflow.log_figure(fig, f"performance_diagnostics/{dataset_name}_diagnostics.png")
         plt.close(fig)
 
     def log_model(self, model: torch.nn.Module, model_name: str, data) -> None:
