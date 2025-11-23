@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import shutil
 from pathlib import Path
 from typing import List
@@ -70,7 +72,7 @@ class STADataset(Dataset):
         self.scenario_names = [scenario.name for scenario in scenarios]
 
         # init base class
-        super().__init__(self.root, transform, pre_transform)
+        super().__init__(str(self.root), transform, pre_transform)
 
     @property
     def raw_file_names(self) -> List[str]:
@@ -123,11 +125,17 @@ class STADataset(Dataset):
         dest = Path(self.raw_dir)
 
         for scenario in tqdm(scenario_paths, desc="Copying node data"):
-            shutil.copy(scenario / "nodes.geojson", dest / f"{scenario.name}_nodes.geojson")
+            shutil.copy(
+                scenario / "nodes.geojson",
+                dest / f"{scenario.name}_nodes.geojson",
+            )
             shutil.copy(scenario / "od.omx", dest / f"{scenario.name}_od.omx")
 
         for scenario in tqdm(result_paths, desc="Copying result data"):
-            shutil.copy(scenario / f"{scenario.name}.parquet", dest / f"{scenario.name}.parquet")
+            shutil.copy(
+                scenario / f"{scenario.name}.parquet",
+                dest / f"{scenario.name}.parquet",
+            )
 
         print("--- Dataset Download Complete ---")
 
@@ -209,7 +217,11 @@ class STADataset(Dataset):
             dmat.insert(0, "origin", list(range(0, len(dmat))))
 
             # melt dataframe
-            dmat = dmat.melt(id_vars="origin", value_vars=dmat.columns[1:], var_name="destination")
+            dmat = dmat.melt(
+                id_vars="origin",
+                value_vars=dmat.columns[1:],
+                var_name="destination",
+            )
             dmat = dmat.loc[dmat["value"] > 0]
             dmat = dmat[["origin", "destination"]]
             dmat = dmat.astype("int32")
@@ -281,6 +293,59 @@ class STADataset(Dataset):
         scenario = self.scenario_names[idx]
         data = torch.load(Path(self.processed_dir) / f"{scenario}.pt", weights_only=False)
         return data
+
+
+def create_splits(
+    dataset: STADataset, split: tuple[float, float, float]
+) -> tuple[
+    tuple[STADataset, STADataset, STADataset],
+    tuple[list, list, list],
+]:
+    """
+    Utility function to split dataset into train, val and test sets.
+
+    Args:
+        dataset: The original dataset to split.
+        split: Tuple containing the relative sizes of the train, val and test sets.
+
+    Results:
+        The three resulting STAdatasets (train, val, test), and tuples containing
+        the indices used for the split.
+    """
+
+    # normalize the sum of the splits
+    split_total = sum(split)
+    split = (
+        split[0] / split_total,
+        split[1] / split_total,
+        split[2] / split_total,
+    )
+
+    # determine sizes
+    n_total = len(dataset)
+    n_train = int(n_total * split[0])
+    n_val = int(n_total * split[1])
+
+    # generate indices
+    indices = np.random.permutation(n_total)
+    train_indices = indices[:n_train].tolist()
+    val_indices = indices[n_train : n_train + n_val].tolist()
+    test_indices = indices[n_train + n_val :].tolist()
+
+    # create subsets
+    train_dataset = dataset[train_indices]
+    val_dataset = dataset[val_indices]
+    test_dataset = dataset[test_indices]
+
+    return (
+        train_dataset,
+        val_dataset,
+        test_dataset,
+    ), (
+        train_indices,
+        val_indices,
+        test_indices,
+    )
 
 
 @click.command()

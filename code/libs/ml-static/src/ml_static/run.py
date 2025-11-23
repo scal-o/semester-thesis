@@ -11,7 +11,7 @@ from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 
 from ml_static.config import Config
-from ml_static.data import STADataset
+from ml_static.data import STADataset, create_splits
 from ml_static.model import GNN
 from ml_static.reporting import (
     compute_statistics,
@@ -20,7 +20,7 @@ from ml_static.reporting import (
     plot_predictions,
 )
 from ml_static.tracker import MLflowtracker
-from ml_static.training import train, validate
+from ml_static.training import run_epoch, run_test
 
 
 def run_training(config: Config, check_run: bool = False) -> tuple:
@@ -46,24 +46,15 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
     dataset = STADataset(config.dataset_path)
 
     # train/val/test split
-    tt = np.random.randn(len(dataset))
-    tt_train = tt < 0.7
-    tt_val = (tt >= 0.7) & (tt < 0.9)
-    tt_test = tt >= 0.9
+    (
+        (train_split, val_split, test_split),
+        (tt_train, tt_val, tt_test),
+    ) = create_splits(dataset, (0.7, 0.15, 0.15))
 
-    train_dataset_split = dataset[tt_train]
-    val_dataset_split = dataset[tt_val]
-    test_dataset_split = dataset[tt_test]
-
-    train_loader = DataLoader(
-        train_dataset_split, batch_size=config.batch_size, shuffle=False
-    )
-    val_loader = DataLoader(
-        val_dataset_split, batch_size=len(val_dataset_split), shuffle=False
-    )
-    test_loader = DataLoader(
-        test_dataset_split, batch_size=len(test_dataset_split), shuffle=False
-    )
+    # create dataloaders
+    train_loader = DataLoader(train_split, batch_size=config.batch_size, shuffle=False)
+    val_loader = DataLoader(val_split, batch_size=len(val_split), shuffle=False)
+    test_loader = DataLoader(test_split, batch_size=len(test_split), shuffle=False)
 
     data_sample = next(iter(train_loader))
 
@@ -78,9 +69,7 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
         run_description = "Training"
 
     # define model
-    model = GNN(data_sample, config.hidden_channels, config.output_channels).to(
-        device
-    )
+    model = GNN(data_sample, config.hidden_channels, config.output_channels).to(device)
 
     # define loss and optimizer
     loss = config.get_loss_function()
@@ -108,27 +97,16 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
         )
 
         for epoch in tqdm(range(1, epochs + 1), desc=run_description):
-            e_train_loss = 0.0
-            e_val_loss = 0.0
-            train_batches = 0
-            val_batches = 0
-
-            for data in data_iterator:
-                data = data.to(device)
-                train_loss = train(model, optimizer, loss, data, target_getter)
-
-                e_train_loss += train_loss
-                train_batches += 1
-
-            for data in val_loader:
-                data = data.to(device)
-                val_loss = validate(model, loss, data, target_getter)
-                e_val_loss += val_loss
-                val_batches += 1
-
-            # average loss
-            e_train_loss /= train_batches
-            e_val_loss /= val_batches
+            # train/val phase
+            e_train_loss, e_val_loss = run_epoch(
+                model,
+                data_iterator,
+                val_loader,
+                optimizer,
+                loss,
+                device,
+                target_getter,
+            )
 
             # log metrics
             tracker.log_epoch(epoch, e_train_loss, e_val_loss)
@@ -139,20 +117,12 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
                 )
 
         # test phase
-        test_loss = 0.0
-        test_batches = 0
-        for data in test_loader:
-            data = data.to(device)
-            loss_out = validate(model, loss, data, target_getter)
-            test_loss += loss_out
-            test_batches += 1
-
-        test_loss /= test_batches
+        test_loss = run_test(model, test_loader, loss, device, target_getter)
         mlflow.log_metric("test_loss", test_loss)
         print(f"Test Loss: {test_loss:.4f}")
 
         tracker.log_training_curves()
-        tracker.log_model(model, config.model_name, data)
+        tracker.log_model(model, config.model_name, data_sample)
 
         return (
             model,
@@ -235,9 +205,7 @@ def train_model(
             ("Validation", val_loader),
             ("Test", test_loader),
         ]:
-            pred_df = generate_prediction_df(
-                model, loader, device, target_getter
-            )
+            pred_df = generate_prediction_df(model, loader, device, target_getter)
             stats_df = compute_statistics(pred_df)
             stats_df["Dataset"] = name
             stats_dfs.append(stats_df)
@@ -252,9 +220,7 @@ def train_model(
 
         return model, dataset, tt_train, tt_val, tt_test
     except Exception as e:
-        raise Exception(
-            f"Training failed. An unexpected error occurred: {e}"
-        ) from e
+        raise Exception(f"Training failed. An unexpected error occurred: {e}") from e
 
 
 # run script if not called from cli entrypoint
