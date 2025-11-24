@@ -67,6 +67,7 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
     # define loss and optimizer
     loss = config.get_loss_function()
     optimizer = config.get_optimizer(model.parameters())
+    scheduler = config.get_scheduler(optimizer)
 
     # define training epochs
     epochs = config.epochs
@@ -97,12 +98,18 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
                 device,
             )
 
+            # step scheduler
+            scheduler.step(e_val_loss)
+
+            # get current learning rate
+            current_lr = scheduler.get_last_lr()[0]
+
             # log metrics
-            tracker.log_epoch(epoch, e_train_loss, e_val_loss)
+            tracker.log_epoch(epoch, e_train_loss, e_val_loss, current_lr)
 
             if epoch % 10 == 0:
                 print(
-                    f"Epoch {epoch}/{epochs} - Train Loss: {e_train_loss:.4f} - Val Loss: {e_val_loss:.4f}"
+                    f"Epoch {epoch}/{epochs} - Train Loss: {e_train_loss:.4f} - Val Loss: {e_val_loss:.4f} - LR: {current_lr:.2e}"
                 )
 
         # test phase

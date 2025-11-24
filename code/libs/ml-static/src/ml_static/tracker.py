@@ -67,24 +67,32 @@ class MLflowtracker:
         """
         mlflow.log_param("seed", seed)
 
-    def log_epoch(self, epoch: int, train_loss: float, val_loss: float) -> None:
+    def log_epoch(
+        self,
+        epoch: int,
+        train_loss: float,
+        val_loss: float,
+        learning_rate: float | None = None,
+    ) -> None:
         """Log metrics for a single epoch.
 
         Args:
             epoch: Epoch number.
             train_loss: Training loss value.
             val_loss: Validation loss value.
+            learning_rate: Current learning rate.
         """
         self.train_losses.append(train_loss)
         self.val_losses.append(val_loss)
 
-        mlflow.log_metrics(
-            {
-                "train_loss": train_loss,
-                "val_loss": val_loss,
-            },
-            step=epoch,
-        )
+        metrics = {
+            "train_loss": train_loss,
+            "val_loss": val_loss,
+        }
+        if learning_rate is not None:
+            metrics["learning_rate"] = learning_rate
+
+        mlflow.log_metrics(metrics, step=epoch)
 
     def log_test_loss(self, test_loss: float) -> None:
         """Log test loss metric.

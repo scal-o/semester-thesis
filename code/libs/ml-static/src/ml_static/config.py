@@ -75,6 +75,33 @@ class Config:
         else:
             raise ValueError(f"Unknown optimizer type: {optimizer_type}")
 
+    def get_scheduler(
+        self, optimizer: torch.optim.Optimizer
+    ) -> torch.optim.lr_scheduler.LRScheduler:
+        """
+        Instantiate learning rate scheduler based on configuration.
+
+        Args:
+            optimizer: The optimizer for which to schedule the learning rate.
+
+        Returns:
+            Initialized learning rate scheduler.
+
+        Raises:
+            ValueError: If scheduler type is not supported.
+        """
+        scheduler_config = self._config.get("scheduler", {})
+        scheduler_type = scheduler_config.get("type", "reduce_on_plateau").lower()
+
+        if scheduler_type == "reduce_on_plateau":
+            factor = scheduler_config.get("factor", 0.1)
+            patience = scheduler_config.get("patience", 10)
+            return torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode="min", factor=factor, patience=patience
+            )
+        else:
+            raise ValueError(f"Unknown scheduler type: {scheduler_type}")
+
     def get_target(self) -> tuple[tuple, str]:
         """
         Get target (labels) based on configuration.
