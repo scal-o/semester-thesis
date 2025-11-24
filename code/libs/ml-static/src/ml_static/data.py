@@ -265,6 +265,11 @@ class STADataset(Dataset):
     def len(self) -> int:
         return len(self.processed_file_names)
 
+    def get(self, idx: int) -> HeteroData:
+        scenario = self.scenario_names[idx]
+        data = torch.load(Path(self.processed_dir) / f"{scenario}.pt", weights_only=False)
+        return data
+
     def __getitem__(self, idx):
         """
         Handles indexing and slicing of the dataset.
@@ -273,25 +278,23 @@ class STADataset(Dataset):
         with the sliced custom attributes attached.
         """
         if isinstance(idx, int):
-            return self.get(idx)
+            data = self.get(idx)
+            data = data if self.transform is None else self.transform(data)
+            return data
 
         # return a subset of the original dataset if a list or slice is passed
         subset = copy.copy(self)
 
         # monkey-patch the subset to include the correct indices and custom attributes
         # so it behaves like a normal STADataset for our purposes
-        subset._indices = subset.indices()[idx]
+        indices = subset.indices()
+        subset._indices = [indices[i] for i in idx]
 
         subset.scenario_names = [self.scenario_names[i] for i in subset.indices()]
         subset.scenario_paths = [self.scenario_paths[i] for i in subset.indices()]
         subset.result_paths = [self.result_paths[i] for i in subset.indices()]
 
         return subset
-
-    def get(self, idx: int) -> HeteroData:
-        scenario = self.scenario_names[idx]
-        data = torch.load(Path(self.processed_dir) / f"{scenario}.pt", weights_only=False)
-        return data
 
 
 def create_splits(
