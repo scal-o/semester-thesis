@@ -2,7 +2,6 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Callable
 
 import matplotlib.pyplot as plt
 import mlflow
@@ -147,6 +146,8 @@ class MLflowtracker:
         """
 
         code_dir = Path(__file__).parent
+        model.cpu()
+        data.to("cpu")
 
         with tempfile.TemporaryDirectory() as dirname:
             tempdir = Path(dirname)
@@ -170,7 +171,6 @@ class MLflowtracker:
         self,
         model: torch.nn.Module,
         loaders: dict[str, DataLoader],
-        target_getter: Callable,
     ) -> pd.DataFrame:
         """
         Convenience method that logs performance reports for multiple dataset splits.
@@ -181,7 +181,6 @@ class MLflowtracker:
         Args:
             model: The trained GNN model.
             loaders: Dictionary mapping dataset names to DataLoaders.
-            target_getter: A function to extract the target values from the data object.
 
         Returns:
             A DataFrame containing statistics for all dataset splits.
@@ -190,7 +189,7 @@ class MLflowtracker:
         figs = {}
 
         for dataset_name, loader in tqdm(loaders.items(), desc="Logging Performance Reports"):
-            pred_df = rep.compute_predictions(model, loader, target_getter)
+            pred_df = rep.compute_predictions(model, loader)
             stats_df = rep.compute_statistics(pred_df)
             stats_df["Dataset"] = dataset_name
             stats_dfs.append(stats_df)

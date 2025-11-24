@@ -1,6 +1,5 @@
 import random
 from pathlib import Path
-from typing import Callable
 
 import torch
 import yaml
@@ -76,37 +75,32 @@ class Config:
         else:
             raise ValueError(f"Unknown optimizer type: {optimizer_type}")
 
-    def get_target_extractor(self) -> Callable:
+    def get_target(self) -> tuple[tuple, str]:
         """
-        Get target extractor function based on configuration.
+        Get target (labels) based on configuration.
 
         Returns:
-            Target extractor callable.
-
-        Raises:
-            ValueError: If target type is not supported.
+            Target name.
         """
-        target_type = self._config.get("training", {}).get("target", "edge_labels")
+        target = self._config.get("training", {}).get("target", {})
 
-        # return basic get_labels function
-        if target_type == "edge_labels":
+        target_type = target.get("type", ("nodes", "real", "nodes"))
+        if isinstance(target_type, list):
+            target_type = tuple(target_type)
+        target_label = target.get("label", "edge_vcr")
 
-            def get_labels(g):
-                return g["nodes", "real", "nodes"].edge_labels
+        return target_type, target_label
 
-            return get_labels
+    def get_transform(self) -> str:
+        """
+        Get data transform type based on configuration.
 
-        # return normalized get_labels function
-        elif target_type == "normalized_edge_labels":
+        Returns:
+            Transform function type.
+        """
+        transform = self._config.get("dataset", {}).get("transform", None)
 
-            def get_normalized(g):
-                labels = g["nodes", "real", "nodes"].edge_labels
-                return (labels - labels.mean()) / (labels.std() + 1e-8)
-
-            return get_normalized
-
-        else:
-            raise ValueError(f"Unknown target type: {target_type}")
+        return transform
 
     @property
     def epochs(self) -> int:

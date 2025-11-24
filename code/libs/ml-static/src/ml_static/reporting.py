@@ -1,5 +1,3 @@
-from typing import Callable
-
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
@@ -18,7 +16,6 @@ from ml_static.data import STADataset
 def compute_predictions(
     model: torch.nn.Module,
     dataloader: DataLoader,
-    target_getter: Callable,
 ) -> pd.DataFrame:
     """
     Generates a DataFrame with predictions and true values for a given dataset.
@@ -27,7 +24,6 @@ def compute_predictions(
         model: The trained GNN model.
         dataloader: The dataloader for the dataset split (train/val/test).
         device: The device to run the model on.
-        target_getter: A function to extract the target values from the data object.
 
     Returns:
         A pandas DataFrame with detailed prediction results.
@@ -43,7 +39,7 @@ def compute_predictions(
         for data in dataloader:
             data = data.to(device)
             predictions = model(data).squeeze()
-            true_values = target_getter(data)
+            true_values = data.y
 
             all_predictions.append(predictions.cpu().numpy())
             all_true_values.append(true_values.cpu().numpy())
@@ -220,7 +216,8 @@ def plot_predictions(
         predictions = model(data).squeeze()
 
     # get the true values
-    true_values = data["nodes", "real", "nodes"].edge_labels
+    # TODO handle different targets
+    true_values = data.y
 
     # get the scenario name
     scenario_name = dataset.scenario_names[scenario_index]

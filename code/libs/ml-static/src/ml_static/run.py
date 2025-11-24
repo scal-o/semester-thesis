@@ -9,7 +9,7 @@ from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 
 from ml_static.config import Config
-from ml_static.data import STADataset, create_splits
+from ml_static.data import STADataset, VarTransform, create_splits
 from ml_static.model import GNN
 from ml_static.tracker import MLflowtracker
 from ml_static.training import run_epoch, run_test
@@ -34,8 +34,9 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
     # set seed
     pg.seed_everything(config.seed)
 
-    # load dataset
-    dataset = STADataset(config.dataset_path)
+    # load transform and dataset
+    transform = VarTransform(config.get_target(), config.get_transform())
+    dataset = STADataset(config.dataset_path, transform=transform)
 
     # train/val/test split
     (
@@ -67,9 +68,6 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
     loss = config.get_loss_function()
     optimizer = config.get_optimizer(model.parameters())
 
-    # define training target
-    target_getter = config.get_target_extractor()
-
     # define training epochs
     epochs = config.epochs
 
@@ -97,7 +95,6 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
                 optimizer,
                 loss,
                 device,
-                target_getter,
             )
 
             # log metrics
@@ -123,19 +120,13 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
             "validation": val_loader,
             "test": test_loader,
         }
-        stats = tracker.log_all_performance_reports(model, loaders, target_getter)
+        stats = tracker.log_all_performance_reports(model, loaders)
         # print stats table
         print(stats)
 
         return (
             model,
             dataset,
-            train_loader,
-            val_loader,
-            test_loader,
-            device,
-            target_getter,
-            tracker,
             tt_train,
             tt_val,
             tt_test,
@@ -189,12 +180,6 @@ def train_model(
         (
             model,
             dataset,
-            train_loader,
-            val_loader,
-            test_loader,
-            device,
-            target_getter,
-            tracker,
             tt_train,
             tt_val,
             tt_test,
@@ -211,8 +196,9 @@ if __name__ == "__main__":
     # When running interactively, we call the underlying function directly
     # to avoid click's command-line handling, which can exit the script.
     model, dataset, tt_train, tt_val, tt_test = train_model.callback(
-        config_path=None, check_run=False
+        config_path=None, check_run=True
     )
+
     results = {
         "model": model,
         "dataset": dataset,

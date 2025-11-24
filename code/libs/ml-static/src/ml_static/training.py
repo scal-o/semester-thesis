@@ -1,5 +1,3 @@
-from typing import Callable
-
 import torch
 import torch.nn as nn
 
@@ -9,7 +7,6 @@ def train(
     optimizer: torch.optim.Optimizer,
     criterion: nn.Module,
     graph,
-    get_target: Callable | None = None,
 ) -> float:
     """
     Perform a single training step.
@@ -19,20 +16,15 @@ def train(
         optimizer: The optimizer for updating model parameters.
         criterion: The loss function.
         graph: A batch of graph data.
-        get_target: A callable that extracts the target from the graph.
-                   Defaults to lambda g: g["real"].edge_labels if None.
 
     Returns:
         The training loss for this step.
     """
-    if get_target is None:
-        get_target = lambda g: g["real"].edge_labels
-
     model.train()
     optimizer.zero_grad()
 
     pred = model(graph)
-    target = get_target(graph)
+    target = graph.y
     loss = criterion(pred, target)
     loss.backward()
     optimizer.step()
@@ -44,7 +36,6 @@ def validate(
     model: nn.Module,
     criterion: nn.Module,
     graph,
-    get_target: Callable | None = None,
 ) -> float:
     """
     Perform validation on a batch of graph data.
@@ -53,19 +44,14 @@ def validate(
         model: The neural network model to validate.
         criterion: The loss function.
         graph: A batch of graph data.
-        get_target: A callable that extracts the target from the graph.
-                   Defaults to lambda g: g["real"].edge_labels if None.
 
     Returns:
         The validation loss.
     """
-    if get_target is None:
-        get_target = lambda g: g["real"].edge_labels
-
     model.eval()
     with torch.no_grad():
         pred = model(graph)
-        target = get_target(graph)
+        target = graph.y
         loss = criterion(pred, target)
 
     return loss.item()
@@ -78,7 +64,6 @@ def run_epoch(
     optimizer: torch.optim.Optimizer,
     loss: nn.Module,
     device: torch.device,
-    target_getter: Callable,
 ) -> tuple[float, float]:
     """
     Run a full epoch of training over the data loader.
@@ -89,7 +74,6 @@ def run_epoch(
         val_loader: DataLoader providing batches of graph data for validation.
         optimizer: The optimizer for updating model parameters.
         criterion: The loss function.
-        get_target: A callable that extracts the target from the graph.
 
     Returns:
         The average training loss over the epoch.
@@ -101,14 +85,14 @@ def run_epoch(
 
     for data in train_loader:
         data = data.to(device)
-        train_loss = train(model, optimizer, loss, data, target_getter)
+        train_loss = train(model, optimizer, loss, data)
 
         e_train_loss += train_loss
         train_batches += 1
 
     for data in val_loader:
         data = data.to(device)
-        val_loss = validate(model, loss, data, target_getter)
+        val_loss = validate(model, loss, data)
         e_val_loss += val_loss
         val_batches += 1
 
@@ -124,7 +108,6 @@ def run_test(
     test_loader,
     loss: nn.Module,
     device: torch.device,
-    target_getter: Callable,
 ) -> float:
     """
     Evaluate the model on the test dataset.
@@ -143,7 +126,7 @@ def run_test(
 
     for data in test_loader:
         data = data.to(device)
-        loss_out = validate(model, loss, data, target_getter)
+        loss_out = validate(model, loss, data)
         test_loss += loss_out
         test_batches += 1
 
