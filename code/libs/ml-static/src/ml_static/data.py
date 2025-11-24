@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import shutil
 from pathlib import Path
 from typing import List
@@ -24,7 +25,7 @@ class STADataset(Dataset):
     The node and link features closely resemble the ones presented in Liu & Meidani (2024).
     """
 
-    def __init__(self, network_dir: str, transform=None, pre_transform=None):
+    def __init__(self, network_dir: Path | str, transform=None, pre_transform=None):
         """
         Args:
             root (str): Root directory where the dataset should be saved.
@@ -214,7 +215,7 @@ class STADataset(Dataset):
             dmat = pd.DataFrame(od_mat)
 
             # add origin col
-            dmat.insert(0, "origin", list(range(0, len(dmat))))
+            dmat.insert(0, "origin", np.array(range(0, len(dmat))))
 
             # melt dataframe
             dmat = dmat.melt(
@@ -274,18 +275,16 @@ class STADataset(Dataset):
         if isinstance(idx, int):
             return self.get(idx)
 
-        # When a slice or list is passed, the base class returns a Subset
-        subset = super().__getitem__(idx)
+        # return a subset of the original dataset if a list or slice is passed
+        subset = copy.copy(self)
 
-        # We monkey-patch the subset to include our sliced custom attributes,
-        # so it behaves like a normal STADataset for our purposes.
+        # monkey-patch the subset to include the correct indices and custom attributes
+        # so it behaves like a normal STADataset for our purposes
+        subset._indices = subset.indices()[idx]
+
         subset.scenario_names = [self.scenario_names[i] for i in subset.indices()]
         subset.scenario_paths = [self.scenario_paths[i] for i in subset.indices()]
         subset.result_paths = [self.result_paths[i] for i in subset.indices()]
-
-        # Add other necessary attributes for plotting and data access
-        subset.link_data_dir = self.link_data_dir
-        subset.node_data_dir = self.node_data_dir
 
         return subset
 
@@ -358,7 +357,7 @@ def create_splits(
 )
 def create_dataset(
     network: str,
-    path: str,
+    path: Path | str | None = None,
 ):
     """
     Creates a Pytorch Geometric dataset from NETWORK's static traffic assignment data.
