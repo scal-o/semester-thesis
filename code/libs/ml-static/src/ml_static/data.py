@@ -12,6 +12,7 @@ import openmatrix as omx
 import pandas as pd
 import torch
 from torch_geometric.data import Dataset, HeteroData
+from torch_geometric.transforms import BaseTransform
 from tqdm import tqdm
 
 
@@ -25,7 +26,7 @@ class STADataset(Dataset):
     The node and link features closely resemble the ones presented in Liu & Meidani (2024).
     """
 
-    def __init__(self, network_dir: Path | str, transform=None, pre_transform=None):
+    def __init__(self, network_dir: Path | str, **kwargs):
         """
         Args:
             root (str): Root directory where the dataset should be saved.
@@ -73,7 +74,7 @@ class STADataset(Dataset):
         self.scenario_names = [scenario.name for scenario in scenarios]
 
         # init base class
-        super().__init__(str(self.root), transform, pre_transform)
+        super().__init__(str(self.root), **kwargs)
 
     @property
     def raw_file_names(self) -> List[str]:
@@ -197,7 +198,8 @@ class STADataset(Dataset):
 
             # extract edge features and labels
             edge_features = link_df[["capacity", "free_flow_time"]].values
-            edge_labels = link_df["volume_capacity_ratio"].values
+            edge_vcr = link_df["volume_capacity_ratio"].values
+            edge_flow = link_df["flow"].values
 
             # standardize edge features (z-score normalization)
             edge_features = (edge_features - edge_features.mean(axis=0)) / (
@@ -207,7 +209,8 @@ class STADataset(Dataset):
             # convert to tensors
             edges = torch.tensor(edges, dtype=torch.long).t()
             edge_features = torch.tensor(edge_features, dtype=torch.float)
-            edge_labels = torch.tensor(edge_labels, dtype=torch.float)
+            edge_vcr = torch.tensor(edge_vcr, dtype=torch.float)
+            edge_flow = torch.tensor(edge_flow, dtype=torch.float)
 
             ##
             ## 3. Virtual Links
@@ -247,7 +250,8 @@ class STADataset(Dataset):
             # append real edge data
             data["nodes", "real", "nodes"].edge_index = edges
             data["nodes", "real", "nodes"].edge_features = edge_features
-            data["nodes", "real", "nodes"].edge_labels = edge_labels
+            data["nodes", "real", "nodes"].edge_vcr = edge_vcr
+            data["nodes", "real", "nodes"].edge_flow = edge_flow
 
             # append virtual edge data
             data["nodes", "virtual", "nodes"].edge_index = virtual_edges
@@ -350,6 +354,46 @@ def create_splits(
     )
 
 
+class VarTransform(BaseTransform):
+    """
+    Custom, variable transformation for Pytorch Geometric datasets.
+    """
+
+    def __init__(self, target: tuple, transform: str | None = None):
+        """
+        Args:
+            type: List specifying the target type (e.g. real links = ["nodes", "real", "nodes"]).
+            label: The target label to extract.
+            transform: The transform to apply to each data object. If none, the data defined by
+                "label" is set as the target without further transformations.
+        """
+        self.type, self.label = target
+        self.transform = transform
+
+    def forward(self, data: HeteroData) -> HeteroData:
+        """
+        Applies the transformation to the data object.
+
+        Args:
+            data: The input HeteroData object.
+
+        Returns:
+            The transformed HeteroData object with the target extracted.
+        """
+        target = data[self.type].get(self.label, None)
+        if target is None:
+            raise KeyError(f"Target label '{self.label}' not found in data type '{self.type}'.")
+
+        if self.transform is not None:
+            if self.transform == "log":
+                target = torch.log1p(target)
+            else:
+                raise NotImplementedError(f"Unknown transform '{self.transform}' specified.")
+
+        data.y = target
+        return data
+
+
 @click.command()
 @click.argument("network")
 @click.option(
@@ -358,9 +402,16 @@ def create_splits(
     show_default=True,
     help="The base path to the networks directory.",
 )
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Force re-creation of the dataset.",
+)
 def create_dataset(
     network: str,
     path: Path | str | None = None,
+    force: bool = False,
 ):
     """
     Creates a Pytorch Geometric dataset from NETWORK's static traffic assignment data.
@@ -385,7 +436,7 @@ def create_dataset(
 
     try:
         # initialize the dataset
-        STADataset(network_path)
+        STADataset(network_path, force_reload=force)
 
         print("--- Dataset Creation Complete ---")
 
