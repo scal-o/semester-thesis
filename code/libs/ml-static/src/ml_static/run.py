@@ -78,8 +78,8 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
 
     # start mlflow run
     with mlflow.start_run():
-        mlflow.log_params(config.raw_config)
-        mlflow.log_param("seed", config.seed)
+        tracker.log_params(config.raw_config)
+        tracker.log_seed(config.seed)
 
         # log split indices via tracker
         tracker.log_split_indices(
@@ -109,8 +109,8 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
                 )
 
         # test phase
-        test_loss = run_test(model, test_loader, loss, device, target_getter)
-        mlflow.log_metric("test_loss", test_loss)
+        test_loss = run_test(model, test_loader, loss, device)
+        tracker.log_test_loss(test_loss)
         print(f"Test Loss: {test_loss:.4f}")
 
         tracker.log_training_curves()

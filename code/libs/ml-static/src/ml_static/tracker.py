@@ -49,6 +49,25 @@ class MLflowtracker:
         self.train_losses: list[float] = list()
         self.val_losses: list[float] = list()
 
+    def log_params(self, params: dict) -> None:
+        """Log multiple parameters to MLflow.
+
+        Args:
+            params: Dictionary of parameter names and values.
+        """
+
+        # flatten parameters dictionary
+        params = pd.json_normalize(params).to_dict(orient="records")[0]
+        mlflow.log_params(params)
+
+    def log_seed(self, seed: int) -> None:
+        """Log random seed used for the run.
+
+        Args:
+            seed: Random seed value.
+        """
+        mlflow.log_param("seed", seed)
+
     def log_epoch(self, epoch: int, train_loss: float, val_loss: float) -> None:
         """Log metrics for a single epoch.
 
@@ -67,6 +86,14 @@ class MLflowtracker:
             },
             step=epoch,
         )
+
+    def log_test_loss(self, test_loss: float) -> None:
+        """Log test loss metric.
+
+        Args:
+            test_loss: Test loss value.
+        """
+        mlflow.log_metric("test_loss", test_loss)
 
     def log_split_indices(self, train_idx: NDArray, val_idx: NDArray, test_idx: NDArray) -> None:
         """Log train/val/test split indices as artifacts.
