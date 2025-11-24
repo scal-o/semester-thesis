@@ -5,7 +5,6 @@ import mlflow
 import numpy as np
 import torch
 import torch_geometric as pg
-from tabulate import tabulate
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 
