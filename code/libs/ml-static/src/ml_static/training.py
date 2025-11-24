@@ -1,6 +1,7 @@
+from typing import Callable
+
 import torch
 import torch.nn as nn
-from typing import Callable
 
 
 def train(
@@ -8,7 +9,7 @@ def train(
     optimizer: torch.optim.Optimizer,
     criterion: nn.Module,
     graph,
-    get_target: Callable = None,
+    get_target: Callable | None = None,
 ) -> float:
     """
     Perform a single training step.
@@ -43,7 +44,7 @@ def validate(
     model: nn.Module,
     criterion: nn.Module,
     graph,
-    get_target: Callable = None,
+    get_target: Callable | None = None,
 ) -> float:
     """
     Perform validation on a batch of graph data.
