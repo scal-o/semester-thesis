@@ -2,15 +2,22 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Callable
 
 import matplotlib.pyplot as plt
-import pandas as pd
 import mlflow
 import numpy as np
+import pandas as pd
 import torch
 import torch_geometric
 import yaml
 from numpy.typing import NDArray
+from tabulate import tabulate
+from torch_geometric.loader import DataLoader
+from tqdm import tqdm
+
+from ml_static import reporting as rep
+from ml_static.data import STADataset
 
 # env vars to load
 ENV_VARS = {
@@ -95,27 +102,7 @@ class MLflowtracker:
         ax.legend()
 
         # save and log plot
-        mlflow.log_figure(fig, "plots/training_curves.png")
-        plt.close(fig)
-
-    def log_performance_report(
-        self, stats_df: pd.DataFrame, fig: plt.Figure, dataset_name: str
-    ) -> None:
-        """
-        Logs performance statistics as a dictionary artifact and diagnostic
-        plots as a figure artifact to MLflow.
-
-        Args:
-            stats_df: DataFrame with performance metrics.
-            fig: Figure object with diagnostic plots.
-            dataset_name: Name of the dataset split (e.g., "Test").
-        """
-        # Log metrics as a dictionary artifact
-        stats_dict = {dataset_name: stats_df.to_dict("records")[0]}
-        mlflow.log_dict(stats_dict, f"performance_stats/{dataset_name}_stats.json")
-
-        # Log figure artifact
-        mlflow.log_figure(fig, f"performance_diagnostics/{dataset_name}_diagnostics.png")
+        mlflow.log_figure(fig, "training_stats/training_curves.png")
         plt.close(fig)
 
     def log_model(self, model: torch.nn.Module, model_name: str, data) -> None:
@@ -151,3 +138,81 @@ class MLflowtracker:
 
             # log artifacts
             mlflow.log_artifacts(tempdir, artifact_path="code")
+
+    def log_all_performance_reports(
+        self,
+        model: torch.nn.Module,
+        loaders: dict[str, DataLoader],
+        target_getter: Callable,
+    ) -> pd.DataFrame:
+        """
+        Convenience method that logs performance reports for multiple dataset splits.
+
+        This method logs performance reports for each split (train, validation, test)
+        and returns a combined statistics DataFrame.
+
+        Args:
+            model: The trained GNN model.
+            loaders: Dictionary mapping dataset names to DataLoaders.
+            target_getter: A function to extract the target values from the data object.
+
+        Returns:
+            A DataFrame containing statistics for all dataset splits.
+        """
+        stats_dfs = []
+        figs = {}
+
+        for dataset_name, loader in tqdm(loaders.items(), desc="Logging Performance Reports"):
+            pred_df = rep.compute_predictions(model, loader, target_getter)
+            stats_df = rep.compute_statistics(pred_df)
+            stats_df["Dataset"] = dataset_name
+            stats_dfs.append(stats_df)
+
+            fig = rep.plot_performance_diagnostics(pred_df, dataset_name)
+            figs[dataset_name] = fig
+
+        stats_dfs = pd.concat(stats_dfs).set_index("Dataset")
+
+        # log statistics df
+        with tempfile.TemporaryDirectory() as dirname:
+            tempdir = Path(dirname)
+            with open(tempdir / "training_stats.txt", "w") as f:
+                stats = tabulate(stats_dfs, headers="keys", tablefmt="psql")
+                f.write(stats)
+            mlflow.log_artifact(tempdir / "training_stats.txt", "training_stats")
+        mlflow.log_dict(stats_dfs.to_dict(orient="index"), "training_stats/training_stats.json")
+
+        # log diagnostic figures
+        for dataset_name, fig in figs.items():
+            mlflow.log_figure(fig, f"training_stats/diagnostics_{dataset_name}.png")
+            plt.close(fig)
+
+        return stats
+
+    def log_scenario_predictions(
+        self,
+        model: torch.nn.Module,
+        dataset: STADataset,
+        dataset_name: str,
+        scenario_index: int,
+    ) -> None:
+        """
+        High-level method that generates and logs scenario prediction plots.
+
+        This method internally:
+        1. Generates predictions using reporting.plot_predictions()
+        2. Logs the plot to MLflow
+
+        Args:
+            model: The trained GNN model.
+            dataset: The dataset containing the scenario.
+            scenario_index: The index of the scenario to plot.
+        """
+
+        # Generate and plot predictions
+        fig = rep.plot_predictions(model, dataset, dataset_name, scenario_index)
+
+        # Log to MLflow
+        scenario_name = dataset.scenario_names[scenario_index]
+        mlflow.log_figure(fig, f"scenario_predictions/{scenario_name}_predictions.png")
+        plt.close(fig)

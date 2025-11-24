@@ -3,7 +3,6 @@ from pathlib import Path
 import click
 import mlflow
 import numpy as np
-import pandas as pd
 import torch
 import torch_geometric as pg
 from tabulate import tabulate
@@ -13,12 +12,6 @@ from tqdm import tqdm
 from ml_static.config import Config
 from ml_static.data import STADataset, create_splits
 from ml_static.model import GNN
-from ml_static.reporting import (
-    compute_statistics,
-    generate_prediction_df,
-    plot_performance_diagnostics,
-    plot_predictions,
-)
 from ml_static.tracker import MLflowtracker
 from ml_static.training import run_epoch, run_test
 
@@ -124,6 +117,17 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
         tracker.log_training_curves()
         tracker.log_model(model, config.model_name, data_sample)
 
+        print("--- Computing Performance Statistics ---")
+        # log performance reports for all dataset splits
+        loaders = {
+            "train": train_loader,
+            "validation": val_loader,
+            "test": test_loader,
+        }
+        stats = tracker.log_all_performance_reports(model, loaders, target_getter)
+        # print stats table
+        print(stats)
+
         return (
             model,
             dataset,
@@ -142,7 +146,7 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
 @click.command("train")
 @click.option(
     "-c",
-    "--config",
+    "--config-path",
     default=None,
     help="Path to YAML configuration file. Defaults to conf_run.yaml.",
 )
@@ -153,7 +157,7 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
     help="Run a check run on a single data sample to verify model convergence.",
 )
 def train_model(
-    config: str = None,
+    config_path: Path | str | None = None,
     check_run: bool = False,
 ) -> tuple:
     """
@@ -165,10 +169,10 @@ def train_model(
     print("--- Training GNN Model ---")
 
     # set up configuration path
-    if config is None:
+    if config_path is None:
         config_path = Path(__file__).parent / "conf_run.yaml"
     else:
-        config_path = Path(config)
+        config_path = Path(config_path)
 
     # check path
     if not config_path.exists():
@@ -198,26 +202,6 @@ def train_model(
         ) = run_training(config, check_run=check_run)
         print("--- Training Complete ---")
 
-        print("--- Performance Statistics ---")
-        stats_dfs = []
-        for name, loader in [
-            ("Train", train_loader),
-            ("Validation", val_loader),
-            ("Test", test_loader),
-        ]:
-            pred_df = generate_prediction_df(model, loader, device, target_getter)
-            stats_df = compute_statistics(pred_df)
-            stats_df["Dataset"] = name
-            stats_dfs.append(stats_df)
-
-            # Generate and log diagnostic plots
-            fig = plot_performance_diagnostics(pred_df, name)
-            tracker.log_performance_report(stats_df, fig, name)
-
-        # format and print the table
-        result_df = pd.concat(stats_dfs).set_index("Dataset")
-        print(tabulate(result_df, headers="keys", tablefmt="psql"))
-
         return model, dataset, tt_train, tt_val, tt_test
     except Exception as e:
         raise Exception(f"Training failed. An unexpected error occurred: {e}") from e
@@ -228,7 +212,7 @@ if __name__ == "__main__":
     # When running interactively, we call the underlying function directly
     # to avoid click's command-line handling, which can exit the script.
     model, dataset, tt_train, tt_val, tt_test = train_model.callback(
-        config=None, check_run=False, plot_scenario=None
+        config_path=None, check_run=False
     )
     results = {
         "model": model,
