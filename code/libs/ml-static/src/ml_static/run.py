@@ -62,7 +62,7 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
         run_description = "Training"
 
     # define model
-    model = GNN(data_sample, config.hidden_channels, config.output_channels).to(device)
+    model = GNN(config.input_channels, config.hidden_channels, config.output_channels).to(device)
 
     # define loss and optimizer
     loss = config.get_loss_function()

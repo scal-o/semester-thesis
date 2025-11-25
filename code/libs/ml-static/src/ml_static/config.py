@@ -140,6 +140,17 @@ class Config:
         return self._config.get("training", {}).get("batch_size", 1)
 
     @property
+    def input_channels(self) -> int:
+        """
+        Get input channels for model. This is a REQUIRED parameter.
+        Raises an error if not specified in the configuration.
+        """
+        channels = self._config.get("model", {}).get("input_channels", None)
+        if channels is None:
+            raise ValueError("Input channels not specified in configuration")
+        return channels
+
+    @property
     def hidden_channels(self) -> int:
         """Get hidden channels for model."""
         return self._config.get("model", {}).get("hidden_channels", 32)

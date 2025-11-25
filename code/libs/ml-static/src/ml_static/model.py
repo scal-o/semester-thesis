@@ -26,10 +26,17 @@ class MLPRegressor(nn.Module):
 
 
 class GNN(nn.Module):
-    def __init__(self, data_sample, hidden_channels, out_channels):
+    def __init__(self, input_channels, hidden_channels, out_channels):
         super().__init__()
 
-        self.vencoder1 = VEncoder(data_sample.num_features["nodes"], hidden_channels, 2)
+        # Store initialization parameters for serialization
+        self._init_params = {  # type: ignore
+            "input_dim": input_channels,
+            "hidden_channels": hidden_channels,
+            "out_channels": out_channels,
+        }
+
+        self.vencoder1 = VEncoder(input_channels, hidden_channels, 2)
         self.vencoder2 = VEncoder(hidden_channels, hidden_channels, 2)
 
         self.rencoder1 = REncoder(hidden_channels, hidden_channels, 2)
