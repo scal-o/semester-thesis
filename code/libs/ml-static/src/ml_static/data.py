@@ -63,6 +63,11 @@ class STADataset(Dataset):
         if (self.link_data_dir / "scenario_00000").is_dir():
             results.remove(self.link_data_dir / "scenario_00000")
 
+        # sort paths deterministically by name to ensure reproducible ordering
+        # across different systems and filesystem implementations
+        scenarios = sorted(scenarios, key=lambda p: p.name)
+        results = sorted(results, key=lambda p: p.name)
+
         # check there are the same number of scenarios and results
         if len(scenarios) != len(results):
             raise ValueError(
