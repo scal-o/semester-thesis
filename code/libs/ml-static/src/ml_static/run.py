@@ -34,9 +34,8 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
     # set seed
     pg.seed_everything(config.seed)
 
-    # load transform and dataset
-    transform = VarTransform(config.get_target(), config.get_transform())
-    dataset = STADataset(config.dataset_path, transform=transform)
+    # load dataset (and implicitly apply transforms) from config
+    dataset = STADataset.from_config(config)
 
     # train/val/test split
     (
@@ -62,7 +61,7 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
         run_description = "Training"
 
     # define model
-    model = GNN(config.input_channels, config.hidden_channels, config.output_channels).to(device)
+    model = GNN.from_config(config).to(device)
 
     # define loss and optimizer
     loss = config.get_loss_function()

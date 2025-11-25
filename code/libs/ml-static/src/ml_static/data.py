@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 import shutil
 from pathlib import Path
-from typing import List
+from typing import TYPE_CHECKING, Self
 
 import click
 import geopandas as gpd
@@ -14,6 +14,9 @@ import torch
 from torch_geometric.data import Dataset, HeteroData
 from torch_geometric.transforms import BaseTransform
 from tqdm import tqdm
+
+if TYPE_CHECKING:
+    from ml_static.config import Config
 
 
 class STADataset(Dataset):
@@ -81,8 +84,26 @@ class STADataset(Dataset):
         # init base class
         super().__init__(str(self.root), **kwargs)
 
+    @classmethod
+    def from_config(cls, config: Config) -> Self:
+        """
+        Create dataset from configuration object.
+
+        Args:
+            data_path: Path to the network data directory.
+            config: Configuration object.
+
+        Returns:
+            STADataset instance.
+        """
+        # extract transform configuration from config
+        transform = VarTransform.from_config(config)
+
+        # create and return dataset
+        return cls(config.dataset_path, transform=transform)
+
     @property
-    def raw_file_names(self) -> List[str]:
+    def raw_file_names(self) -> list[str]:
         """
         Returns the list of files that must be present in the raw_dir directory
         in order to skip the download step.
@@ -101,7 +122,7 @@ class STADataset(Dataset):
         return names_nodes + names_od + names_links
 
     @property
-    def processed_file_names(self) -> List[str]:
+    def processed_file_names(self) -> list[str]:
         """
         Return the list of files that must be present in the processed_dir directory
         in order to skip the processing step.
@@ -374,6 +395,23 @@ class VarTransform(BaseTransform):
         """
         self.type, self.label = target
         self.transform = transform
+
+    @classmethod
+    def from_config(cls, config: Config) -> Self:
+        """
+        Create transform from configuration object.
+
+        Args:
+            config: Configuration object.
+
+        Returns:
+            VarTransform instance.
+        """
+        # use Config API to get target and transform
+        target = config.get_target()
+        transform_type = config.get_transform()
+
+        return cls(target=target, transform=transform_type)
 
     def forward(self, data: HeteroData) -> HeteroData:
         """

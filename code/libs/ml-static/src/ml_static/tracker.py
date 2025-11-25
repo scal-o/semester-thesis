@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 import os
 import shutil
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import matplotlib.pyplot as plt
 import mlflow
@@ -10,13 +13,18 @@ import pandas as pd
 import torch
 import torch_geometric
 import yaml
-from numpy.typing import NDArray
 from tabulate import tabulate
-from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 
 from ml_static import reporting as rep
-from ml_static.data import STADataset
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
+    from torch_geometric.loader import DataLoader
+
+    from ml_static.data import STADataset
+    from ml_static.model import GNN
+
 
 # env vars to load
 ENV_VARS = {
@@ -120,6 +128,7 @@ class MLflowtracker:
             np.savetxt(tempdir / "test_indices.txt", test_idx, fmt="%d")
 
             # log as artifacts
+            tempdir = str(tempdir.absolute())
             mlflow.log_artifacts(tempdir, artifact_path="split_indices")
 
     def log_training_curves(self) -> None:
@@ -139,7 +148,7 @@ class MLflowtracker:
         mlflow.log_figure(fig, "training_stats/training_curves.png")
         plt.close(fig)
 
-    def log_model(self, model: torch.nn.Module, model_name: str, data) -> None:
+    def log_model(self, model: GNN, model_name: str, data) -> None:
         """Log model with related artifacts.
 
         Logs:
@@ -165,10 +174,7 @@ class MLflowtracker:
             shutil.copytree(code_dir, tempdir, dirs_exist_ok=True)
 
             # save model weights and initialization parameters
-            checkpoint = {
-                "state_dict": model.state_dict(),
-                "init_params": model._init_params,
-            }
+            checkpoint = model.extract_checkpoint()
             torch.save(checkpoint, tempdir / "model.pt")
 
             # save model summary
@@ -177,6 +183,7 @@ class MLflowtracker:
                 f.write(model_summary)
 
             # log artifacts
+            tempdir = str(tempdir.absolute())
             mlflow.log_artifacts(tempdir, artifact_path="code")
 
     def log_all_performance_reports(
@@ -217,7 +224,8 @@ class MLflowtracker:
             with open(tempdir / "training_stats.txt", "w") as f:
                 stats = tabulate(stats_dfs, headers="keys", tablefmt="psql")
                 f.write(stats)
-            mlflow.log_artifact(tempdir / "training_stats.txt", "training_stats")
+            tmp = str((tempdir / "training_stats.txt").absolute())
+            mlflow.log_artifact(tmp, "training_stats")
         mlflow.log_dict(stats_dfs.to_dict(orient="index"), "training_stats/training_stats.json")
 
         # log diagnostic figures

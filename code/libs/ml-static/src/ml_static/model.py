@@ -1,12 +1,18 @@
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.data import HeteroData
 
 from ml_static.encoders import REncoder, VEncoder
+
+if TYPE_CHECKING:
+    from torch_geometric.data import HeteroData
+
+    from ml_static.config import Config
 
 
 class MLPRegressor(nn.Module):
@@ -32,13 +38,6 @@ class GNN(nn.Module):
     def __init__(self, input_channels, hidden_channels, out_channels):
         super().__init__()
 
-        # Store initialization parameters for serialization
-        self._init_params = {  # type: ignore
-            "input_dim": input_channels,
-            "hidden_channels": hidden_channels,
-            "out_channels": out_channels,
-        }
-
         self.vencoder1 = VEncoder(input_channels, hidden_channels, 2)
         self.vencoder2 = VEncoder(hidden_channels, hidden_channels, 2)
 
@@ -59,8 +58,38 @@ class GNN(nn.Module):
 
         return z
 
+    def extract_checkpoint(self):
+        """
+        Extract model checkpoint containing current state dict.
+        The checkpoint can be extended to include additional information as needed.
+
+        Returns:
+            Checkpoint dictionary.
+        """
+        checkpoint = {
+            "state_dict": self.state_dict(),
+        }
+        return checkpoint
+
     @classmethod
-    def from_checkpoint(cls, checkpoint_path: Path | str) -> Self:
+    def from_config(cls, config: Config) -> Self:
+        """
+        Create GNN model from configuration object.
+
+        Args:
+            config: Configuration object.
+
+        Returns:
+            GNN model instance.
+        """
+        return cls(
+            input_channels=config.input_channels,
+            hidden_channels=config.hidden_channels,
+            out_channels=config.output_channels,
+        )
+
+    @classmethod
+    def from_checkpoint(cls, config: Config, checkpoint_path: Path | str) -> Self:
         """
         Load a GNN model from a checkpoint file.
 
@@ -73,15 +102,8 @@ class GNN(nn.Module):
         """
         checkpoint = torch.load(checkpoint_path, weights_only=False)
 
-        # extract initialization parameters
-        init_params = checkpoint["init_params"]
-
         # instantiate the model
-        model = cls(
-            input_channels=init_params["input_dim"],
-            hidden_channels=init_params["hidden_channels"],
-            out_channels=init_params["out_channels"],
-        )
+        model = cls.from_config(config)
 
         # load the state dict
         model.load_state_dict(checkpoint["state_dict"])
