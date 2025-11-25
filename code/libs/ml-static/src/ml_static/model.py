@@ -1,3 +1,6 @@
+from pathlib import Path
+from typing import Self
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -55,3 +58,32 @@ class GNN(nn.Module):
         z = self.mlp(g, graph["real"].edge_index, graph["real"].edge_features)
 
         return z
+
+    @classmethod
+    def from_checkpoint(cls, checkpoint_path: Path | str) -> Self:
+        """
+        Load a GNN model from a checkpoint file.
+
+        Args:
+            checkpoint_path: Path to the checkpoint file (.pt).
+            device: Device to load the model on ("cpu" or "cuda").
+
+        Returns:
+            Loaded GNN model in evaluation mode.
+        """
+        checkpoint = torch.load(checkpoint_path, weights_only=False)
+
+        # extract initialization parameters
+        init_params = checkpoint["init_params"]
+
+        # instantiate the model
+        model = cls(
+            input_channels=init_params["input_dim"],
+            hidden_channels=init_params["hidden_channels"],
+            out_channels=init_params["out_channels"],
+        )
+
+        # load the state dict
+        model.load_state_dict(checkpoint["state_dict"])
+
+        return model

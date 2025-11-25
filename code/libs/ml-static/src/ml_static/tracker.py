@@ -164,8 +164,12 @@ class MLflowtracker:
             # TODO: if passing custom config to the cli, copy that instead of the default
             shutil.copytree(code_dir, tempdir, dirs_exist_ok=True)
 
-            # save model weights
-            torch.save(model.state_dict(), tempdir / "model.pt")
+            # save model weights and initialization parameters
+            checkpoint = {
+                "state_dict": model.state_dict(),
+                "init_params": model._init_params,
+            }
+            torch.save(checkpoint, tempdir / "model.pt")
 
             # save model summary
             with open(tempdir / "model_summary.txt", "w") as f:
