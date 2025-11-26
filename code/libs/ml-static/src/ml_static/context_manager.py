@@ -136,6 +136,7 @@ class RunContext:
         self._model: Any = None
         self._config: Any = None
         self._dataset: Any = None
+        self._data_split: Any = None
 
         # required files lists
         self.config_files = ["conf_run.yaml"]
@@ -395,3 +396,18 @@ class RunContext:
             self._dataset = self.data_module.STADataset.from_config(self.config)
 
         return self._dataset
+
+    @property
+    def data_split(self) -> dict[str, list]:
+        """
+        Load the data split indices used during the run.
+
+        Returns:
+            Dictionary with split names as keys and list of indices as values.
+        """
+
+        if not self._data_split:
+            print("--- Loading data split indices")
+            self._data_split = self._load_split_indices()
+
+        return self._data_split
