@@ -320,9 +320,9 @@ class STADataset(Dataset):
         indices = subset.indices()
         subset._indices = [indices[i] for i in idx]
 
-        subset.scenario_names = [self.scenario_names[i] for i in subset.indices()]
-        subset.scenario_paths = [self.scenario_paths[i] for i in subset.indices()]
-        subset.result_paths = [self.result_paths[i] for i in subset.indices()]
+        subset.scenario_names = sorted([self.scenario_names[i] for i in subset.indices()])
+        subset.scenario_paths = sorted([self.scenario_paths[i] for i in subset.indices()])
+        subset.result_paths = sorted([self.result_paths[i] for i in subset.indices()])
 
         return subset
 
