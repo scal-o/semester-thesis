@@ -385,6 +385,9 @@ class VarTransform(BaseTransform):
     Custom, variable transformation for Pytorch Geometric datasets.
     """
 
+    # define valid transform types
+    VALID_TRANSFORMS = {"log"}
+
     def __init__(self, target: tuple, transform: str | None = None):
         """
         Args:
@@ -392,9 +395,49 @@ class VarTransform(BaseTransform):
             label: The target label to extract.
             transform: The transform to apply to each data object. If none, the data defined by
                 "label" is set as the target without further transformations.
+
+        Raises:
+            ValueError: If transform type is not in VALID_TRANSFORMS.
         """
         self.type, self.label = target
+
+        # validate transform type
+        if transform is not None and transform not in self.VALID_TRANSFORMS:
+            valid_list = ", ".join(f"'{t}'" for t in sorted(self.VALID_TRANSFORMS))
+            raise ValueError(
+                f"Invalid transform type '{transform}'. Valid options are: {valid_list}, or None."
+            )
+
         self.transform = transform
+
+    def inverse_transform(self, x: torch.Tensor | np.ndarray) -> torch.Tensor | np.ndarray:
+        """
+        Applies the inverse transformation to a tensor or numpy array.
+
+        Args:
+            x: The data to inverse transform (e.g., predictions or targets).
+               Can be either a torch.Tensor or numpy.ndarray.
+
+        Returns:
+            The inverse-transformed data in the same format as the input.
+        """
+        if self.transform is None:
+            return x
+
+        # flag if input is numpy array
+        is_numpy = isinstance(x, np.ndarray)
+
+        # transform to tensor: no-op if already tensor
+        x = torch.Tensor(x)
+
+        # apply inverse transformation
+        if self.transform == "log":
+            x = torch.expm1(x)
+
+        # transform back to numpy array if necessary
+        x = x.numpy() if is_numpy else x
+
+        return x
 
     @classmethod
     def from_config(cls, config: Config) -> Self:
@@ -430,8 +473,6 @@ class VarTransform(BaseTransform):
         if self.transform is not None:
             if self.transform == "log":
                 target = torch.log1p(target)
-            else:
-                raise NotImplementedError(f"Unknown transform '{self.transform}' specified.")
 
         data.y = target
         return data
