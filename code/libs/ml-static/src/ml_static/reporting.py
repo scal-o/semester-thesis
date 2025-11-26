@@ -215,7 +215,7 @@ def plot_performance_diagnostics(pred_df: pd.DataFrame, dataset_name: str):
 
 def plot_predictions(
     model: torch.nn.Module,
-    dataset: STADataset,
+    dataset: Dataset,
     dataset_name: str,
     scenario_index: int,
 ):
@@ -226,35 +226,27 @@ def plot_predictions(
         model: The trained GNN model.
         dataset: The dataset containing the scenario.
         scenario_index: The index of the scenario to plot.
-        device: The device to run the model on.
     """
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
-
-    # get the scenario data
-    data = dataset[scenario_index].to(device)
-
-    # get the model's predictions
-    model.eval()
-    with torch.no_grad():
-        predictions = model(data).squeeze()
-
-    # get the true values
-    # TODO handle different targets
-    true_values = data.y
+    # get the predictions and true data
+    data = dataset[[scenario_index]]
+    data = compute_predictions(model, data)
+    data = compute_errors(data)
 
     # get the scenario name
     scenario_name = dataset.scenario_names[scenario_index]
 
     # load the network geometry
-    gdf = gpd.read_parquet(dataset.link_data_dir / scenario_name / f"{scenario_name}.parquet")
+    # access link_data_dir from the underlying dataset
+    link_data_dir = getattr(dataset, "link_data_dir", None)
+    if link_data_dir is None:
+        raise AttributeError("Dataset must have 'link_data_dir' attribute for plot_predictions")
+    gdf = gpd.read_parquet(link_data_dir / scenario_name / f"{scenario_name}.parquet")
 
     # add predictions and true values to the GeoDataFrame
-    gdf["predicted_flow"] = predictions.cpu().numpy()
-    gdf["actual_flow"] = true_values.cpu().numpy()
-    gdf["error"] = ((gdf["predicted_flow"] - gdf["actual_flow"]) / gdf["actual_flow"]) * 100
-    gdf["error"] = gdf["error"].fillna(0)  # handle division by zero
+    gdf["predicted_flow"] = data["prediction"]
+    gdf["actual_flow"] = data["true_value"]
+    gdf["error"] = data["percentage_error"]
 
     # create the plots
     fig, axes = plt.subplots(1, 3, figsize=(20, 10), sharex=True, sharey=True)
