@@ -2,14 +2,13 @@ from pathlib import Path
 
 import click
 import mlflow
-import numpy as np
 import torch
 import torch_geometric as pg
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 
 from ml_static.config import Config
-from ml_static.data import STADataset, VarTransform, create_splits
+from ml_static.data import STADataset, create_splits
 from ml_static.model import GNN
 from ml_static.tracker import MLflowtracker
 from ml_static.training import run_epoch, run_test
@@ -117,6 +116,7 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
 
         print("--- Computing Performance Statistics ---")
         # log performance reports for all dataset splits
+        # note: can pass either DataLoaders or Datasets to log_all_performance_reports
         loaders = {
             "train": train_loader,
             "validation": val_loader,

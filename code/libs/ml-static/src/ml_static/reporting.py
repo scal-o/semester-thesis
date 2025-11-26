@@ -5,6 +5,7 @@ import pandas as pd
 import torch
 from scipy.stats import norm
 from sklearn.metrics import mean_squared_error, r2_score
+from torch_geometric.data import Dataset
 from torch_geometric.loader import DataLoader
 
 from ml_static.data import STADataset
@@ -15,19 +16,25 @@ from ml_static.data import STADataset
 ## ==============================
 def compute_predictions(
     model: torch.nn.Module,
-    dataloader: DataLoader,
+    data_source: DataLoader | Dataset,
 ) -> pd.DataFrame:
     """
     Generates a DataFrame with predictions and true values for a given dataset.
 
     Args:
         model: The trained GNN model.
-        dataloader: The dataloader for the dataset split (train/val/test).
-        device: The device to run the model on.
+        data_source: Either a DataLoader or a Dataset for the data split (train/val/test).
 
     Returns:
         A pandas DataFrame with detailed prediction results.
     """
+    # convert dataset to dataloader if needed
+    # dataloaders allow for faster processing
+    if isinstance(data_source, Dataset):
+        dataloader = DataLoader(data_source, batch_size=len(data_source), shuffle=False)
+    else:
+        dataloader = data_source
+
     all_predictions = []
     all_true_values = []
 
