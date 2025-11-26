@@ -80,11 +80,7 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
         tracker.log_seed(config.seed)
 
         # log split indices via tracker
-        tracker.log_split_indices(
-            np.where(tt_train)[0],
-            np.where(tt_val)[0],
-            np.where(tt_test)[0],
-        )
+        tracker.log_split_indices(tt_train, tt_val, tt_test)
 
         for epoch in tqdm(range(1, epochs + 1), desc=run_description):
             # train/val phase
