@@ -116,13 +116,12 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
 
         print("--- Computing Performance Statistics ---")
         # log performance reports for all dataset splits
-        # note: can pass either DataLoaders or Datasets to log_all_performance_reports
-        loaders = {
-            "train": train_loader,
-            "validation": val_loader,
-            "test": test_loader,
+        datasets = {
+            "train": train_split,
+            "validation": val_split,
+            "test": test_split,
         }
-        stats = tracker.log_all_performance_reports(model, loaders)
+        stats = tracker.log_all_performance_reports(model, datasets)
         # print stats table
         print(stats)
 

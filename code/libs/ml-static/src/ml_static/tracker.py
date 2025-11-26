@@ -21,7 +21,6 @@ from ml_static import reporting as rep
 if TYPE_CHECKING:
     from numpy.typing import NDArray
     from torch_geometric.data import Dataset
-    from torch_geometric.loader import DataLoader
 
     from ml_static.data import STADataset
     from ml_static.model import GNN
@@ -190,7 +189,7 @@ class MLflowtracker:
     def log_all_performance_reports(
         self,
         model: torch.nn.Module,
-        loaders: dict[str, DataLoader | Dataset],
+        datasets: dict[str, Dataset],
     ) -> pd.DataFrame:
         """
         Convenience method that logs performance reports for multiple dataset splits.
@@ -200,7 +199,7 @@ class MLflowtracker:
 
         Args:
             model: The trained GNN model.
-            loaders: Dictionary mapping dataset names to DataLoaders or Datasets.
+            datasets: Dictionary mapping dataset names to Datasets.
 
         Returns:
             A DataFrame containing statistics for all dataset splits.
@@ -208,8 +207,9 @@ class MLflowtracker:
         stats_dfs = []
         figs = {}
 
-        for dataset_name, loader in tqdm(loaders.items(), desc="Logging Performance Reports"):
-            pred_df = rep.compute_predictions(model, loader)
+        for dataset_name, dataset in tqdm(datasets.items(), desc="Logging Performance Reports"):
+            pred_df = rep.compute_predictions(model, dataset, inverse_transform=True)
+            pred_df = rep.compute_errors(pred_df)
             stats_df = rep.compute_statistics(pred_df)
             stats_df["Dataset"] = dataset_name
             stats_dfs.append(stats_df)
