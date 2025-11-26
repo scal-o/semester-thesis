@@ -354,7 +354,7 @@ class RunContext:
         return self._config
 
     @property
-    def model(self) -> tuple[torch.nn.Module]:
+    def model(self) -> torch.nn.Module:
         """
         Build the model using the downloaded artifacts.
 
