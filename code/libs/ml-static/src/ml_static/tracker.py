@@ -208,7 +208,7 @@ class MLflowtracker:
         figs = {}
 
         for dataset_name, dataset in tqdm(datasets.items(), desc="Logging Performance Reports"):
-            pred_df = rep.compute_predictions(model, dataset, inverse_transform=True)
+            pred_df = rep.compute_predictions(model, dataset)
             pred_df = rep.compute_errors(pred_df)
             stats_df = rep.compute_statistics(pred_df)
             stats_df["Dataset"] = dataset_name
