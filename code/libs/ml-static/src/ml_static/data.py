@@ -105,6 +105,10 @@ class STADataset(Dataset):
         # create dataset
         dataset = cls(config.dataset_path, transform=transform)
 
+        # fit transform on dataset (required for some scalers)
+        if transform is not None:
+            transform.fit(dataset)
+
         return dataset
 
     @property
@@ -400,7 +404,7 @@ class VarTransform(BaseTransform):
     """
 
     # define valid transform types
-    VALID_TRANSFORMS = {"log"}
+    VALID_TRANSFORMS = {"log", "norm"}
 
     def __init__(self, target: tuple, transform: str | None = None):
         """
@@ -423,6 +427,55 @@ class VarTransform(BaseTransform):
             )
 
         self.transform = transform
+
+        # store scaler parameters
+        self.params = {}
+
+    def _get_target(self, data: HeteroData) -> torch.Tensor:
+        """
+        Extracts the target variable from the data object.
+
+        Args:
+            data: The input HeteroData object.
+
+        Returns:
+            The target variable tensor.
+        """
+
+        if not (self.type in data.node_types or self.type in data.edge_types):
+            raise KeyError(f"Data type '{self.type}' not found in data object.")
+
+        target = data[self.type].get(self.label, None)
+        if target is None:
+            raise KeyError(f"Target label '{self.label}' not found in data type '{self.type}'.")
+        return target
+
+    def fit(self, dataset: "STADataset") -> None:
+        """
+        Compute normalization statistics across the entire dataset.
+        Only needed for "norm" transform.
+
+        Args:
+            dataset: The dataset to compute statistics from.
+        """
+        if self.transform != "norm":
+            return
+
+        # collect all target values across dataset
+        all_targets = []
+        for idx in range(len(dataset)):
+            # get raw data without applying transform
+            data = dataset.get(idx)
+            target = self._get_target(data)
+            all_targets.append(target)
+
+        # concatenate all targets and compute statistics
+        all_targets = torch.cat(all_targets)
+
+        # set flag and store parameters
+        self.params["for"] = "norm"
+        self.params["mean"] = all_targets.mean().item()
+        self.params["std"] = all_targets.std().item()
 
     def inverse_transform(self, x: torch.Tensor | np.ndarray) -> torch.Tensor | np.ndarray:
         """
@@ -447,6 +500,10 @@ class VarTransform(BaseTransform):
         # apply inverse transformation
         if self.transform == "log":
             x = torch.expm1(x)
+        elif self.transform == "norm":
+            if self.params.get("for", None) != "norm":
+                raise ValueError("Cannot inverse transform: normalization parameters not set")
+            x = x * self.params["std"] + self.params["mean"]
 
         # transform back to numpy array if necessary
         x = x.numpy() if is_numpy else x
@@ -480,13 +537,19 @@ class VarTransform(BaseTransform):
         Returns:
             The transformed HeteroData object with the target extracted.
         """
-        target = data[self.type].get(self.label, None)
-        if target is None:
-            raise KeyError(f"Target label '{self.label}' not found in data type '{self.type}'.")
+        target = self._get_target(data)
 
         if self.transform is not None:
             if self.transform == "log":
                 target = torch.log1p(target)
+            elif self.transform == "norm":
+                # ensure statistics are computed before transforming
+                if self.params.get("for", None) != "norm":
+                    raise ValueError(
+                        "Normalization statistics not computed. Call fit() on the dataset first."
+                    )
+                # apply z-score normalization
+                target = (target - self.params["mean"]) / self.params["std"]
 
         data.y = target
         return data
