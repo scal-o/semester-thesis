@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
@@ -5,8 +9,10 @@ import pandas as pd
 import torch
 from scipy.stats import norm
 from sklearn.metrics import mean_squared_error, r2_score
-from torch_geometric.data import Dataset
 from torch_geometric.loader import DataLoader
+
+if TYPE_CHECKING:
+    from ml_static.data import STADataset
 
 
 ## ==============================
@@ -14,7 +20,7 @@ from torch_geometric.loader import DataLoader
 ## ==============================
 def compute_predictions(
     model: torch.nn.Module,
-    dataset: Dataset,
+    dataset: STADataset,
 ) -> pd.DataFrame:
     """
     Generates a DataFrame with predictions and true values for a given dataset.
@@ -215,12 +221,13 @@ def plot_performance_diagnostics(pred_df: pd.DataFrame, dataset_name: str):
 
 def plot_predictions(
     model: torch.nn.Module,
-    dataset: Dataset,
+    dataset: STADataset,
     dataset_name: str,
     scenario_index: int,
 ):
     """
-    Plots the model's predictions for a given scenario.
+    Plots the model's predictions for a given scenario, with separate plots for each direction
+    of bi-directional links.
 
     Args:
         model: The trained GNN model.
@@ -246,52 +253,74 @@ def plot_predictions(
     # add predictions and true values to the GeoDataFrame
     gdf["predicted_flow"] = data["prediction"]
     gdf["actual_flow"] = data["true_value"]
-    gdf["error"] = data["percentage_error"]
+    gdf["error"] = data["absolute_percentage_error"]
 
-    # create the plots
-    fig, axes = plt.subplots(1, 3, figsize=(20, 10), sharex=True, sharey=True)
+    # create a normalized direction identifier based on node ordering
+    # direction 0: a_node < b_node, direction 1: a_node > b_node
+    gdf["link_direction"] = (gdf["a_node"] > gdf["b_node"]).astype(int)
 
-    # get min and max for color map
-    vmin = min(gdf["actual_flow"].min(), gdf["predicted_flow"].min())
-    vmax = max(gdf["actual_flow"].max(), gdf["predicted_flow"].max())
+    # separate into two direction groups
+    gdf_dir0 = gdf[gdf["link_direction"] == 0].copy()
+    gdf_dir1 = gdf[gdf["link_direction"] == 1].copy()
 
-    # plot actual flow
-    gdf.plot(column="actual_flow", ax=axes[0], legend=True, vmin=vmin, vmax=vmax)
-    axes[0].set_title("Actual Flow")
+    # calculate consistent color scales across both directions
+    vmin_flow = min(gdf["actual_flow"].min(), gdf["predicted_flow"].min())
+    vmax_flow = max(gdf["actual_flow"].max(), gdf["predicted_flow"].max())
+    vmin_error = 0
+    vmax_error = gdf["error"].max()
 
-    # plot predicted flow
-    gdf.plot(column="predicted_flow", ax=axes[1], legend=True, vmin=vmin, vmax=vmax)
-    axes[1].set_title("Predicted Flow")
+    # create a single figure with 2 rows and 3 columns
+    fig, axes = plt.subplots(2, 3, figsize=(20, 13), sharex=True, sharey=True)
 
-    # get min and max for error plot
-    min_error = gdf["error"].min()
-    max_error = gdf["error"].max()
+    # plot both directions
+    for row_idx, (direction, gdf_subset) in enumerate([(0, gdf_dir0), (1, gdf_dir1)]):
+        if len(gdf_subset) == 0:
+            continue
 
-    # plot error, capping the color map at +/- 100%
-    gdf.plot(
-        column="error",
-        ax=axes[2],
-        legend=True,
-        cmap="coolwarm",
-        vmin=-100,
-        vmax=100,
-    )
-    axes[2].set_title("Prediction Error (%)")
+        # plot actual flow
+        gdf_subset.plot(
+            column="actual_flow", ax=axes[row_idx, 0], legend=True, vmin=vmin_flow, vmax=vmax_flow
+        )
+        axes[row_idx, 0].set_title(f"Actual Flow - Direction {direction}")
 
-    # add a textbox with the actual min/max error
-    textstr = f"Min Error: {min_error:.2f}%\nMax Error: {max_error:.2f}%"
-    props = dict(boxstyle="round", facecolor="wheat", alpha=0.5)
-    axes[2].text(
-        0.5,
-        0.05,
-        textstr,
-        transform=axes[2].transAxes,
-        fontsize=10,
-        verticalalignment="bottom",
-        horizontalalignment="center",
-        bbox=props,
-    )
+        # plot predicted flow
+        gdf_subset.plot(
+            column="predicted_flow",
+            ax=axes[row_idx, 1],
+            legend=True,
+            vmin=vmin_flow,
+            vmax=vmax_flow,
+        )
+        axes[row_idx, 1].set_title(f"Predicted Flow - Direction {direction}")
 
-    fig.suptitle(f"Dataset: {dataset_name}\nScenario: {scenario_name}", fontsize=16)
+        # plot error
+        gdf_subset.plot(
+            column="error",
+            ax=axes[row_idx, 2],
+            legend=True,
+            cmap="jet",
+            vmin=vmin_error,
+            vmax=vmax_error,
+        )
+        axes[row_idx, 2].set_title(f"Prediction Error (%) - Direction {direction}")
+
+        # add error stats textbox
+        min_error = gdf_subset["error"].min()
+        max_error = gdf_subset["error"].max()
+        avg_error = gdf_subset["error"].mean()
+        textstr = f"Min: {min_error:.2f}%\nMax: {max_error:.2f}%\nAvg: {avg_error:.2f}%"
+        props = dict(boxstyle="round", facecolor="wheat", alpha=0.5)
+        axes[row_idx, 2].text(
+            0.5,
+            0.05,
+            textstr,
+            transform=axes[row_idx, 2].transAxes,
+            fontsize=10,
+            verticalalignment="bottom",
+            horizontalalignment="center",
+            bbox=props,
+        )
+
+    fig.suptitle(f"Dataset: {dataset_name}\nScenario: {scenario_name}\n", fontsize=16)
     plt.tight_layout()
     plt.show()
