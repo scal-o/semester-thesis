@@ -77,9 +77,12 @@ class STADataset(Dataset):
                 f"Found {len(scenarios)} scenario files but {len(results)} results files."
             )
 
-        self.scenario_paths = scenarios
-        self.result_paths = results
-        self.scenario_names = [scenario.name for scenario in scenarios]
+        self._scenario_paths: list[Path] = scenarios
+        self._scenario_results: list[Path] = results
+        self._scenario_names: list[str] = [scenario.name for scenario in scenarios]
+
+        # set default indices to include all scenarios
+        self._indices = range(len(self._scenario_names))
 
         # init base class
         super().__init__(str(self.root), **kwargs)
@@ -99,8 +102,25 @@ class STADataset(Dataset):
         # extract transform configuration from config
         transform = VarTransform.from_config(config)
 
-        # create and return dataset
-        return cls(config.dataset_path, transform=transform)
+        # create dataset
+        dataset = cls(config.dataset_path, transform=transform)
+
+        return dataset
+
+    @property
+    def scenario_paths(self) -> list[Path]:
+        """List of scenario paths."""
+        return [self._scenario_paths[i] for i in self.indices()]
+
+    @property
+    def scenario_results(self) -> list[Path]:
+        """List of scenario result paths."""
+        return [self._scenario_results[i] for i in self.indices()]
+
+    @property
+    def scenario_names(self) -> list[str]:
+        """List of scenario names."""
+        return [self._scenario_names[i] for i in self.indices()]
 
     @property
     def raw_file_names(self) -> list[str]:
@@ -110,7 +130,7 @@ class STADataset(Dataset):
         The file names are derived from the scenarios available in the
         scenarios_sta_results directory.
         """
-        scenario_names = self.scenario_paths
+        scenario_names = self._scenario_paths
 
         # to create a complete graph we need:
         # - node coordinates (from nodes.geojson)
@@ -129,7 +149,7 @@ class STADataset(Dataset):
         The file names are derived from the scenarios available in the
         scenarios_sta_results directory.
         """
-        scenario_names = self.scenario_paths
+        scenario_names = self._scenario_paths
 
         # we expect to find a single .pt file for every scenario
         names = [f"{scenario.name}.pt" for scenario in scenario_names]
@@ -146,8 +166,8 @@ class STADataset(Dataset):
         print(f"Network: {self.network_dir.name}")
         print(f"Path: {self.network_dir}")
 
-        scenario_paths = self.scenario_paths
-        result_paths = self.result_paths
+        scenario_paths = self._scenario_paths
+        result_paths = self._scenario_results
 
         # raw dir
         dest = Path(self.raw_dir)
@@ -176,7 +196,7 @@ class STADataset(Dataset):
         print(f"Network: {self.network_dir.name}")
         print(f"Path: {self.network_dir}")
 
-        scenario_names = self.scenario_names
+        scenario_names = self._scenario_names
 
         for scenario in tqdm(scenario_names, desc="Processing data"):
             # raw dir
@@ -296,7 +316,7 @@ class STADataset(Dataset):
         return len(self.processed_file_names)
 
     def get(self, idx: int) -> HeteroData:
-        scenario = self.scenario_names[idx]
+        scenario = self._scenario_names[idx]
         data = torch.load(Path(self.processed_dir) / f"{scenario}.pt", weights_only=False)
         return data
 
@@ -308,21 +328,15 @@ class STADataset(Dataset):
         with the sliced custom attributes attached.
         """
         if isinstance(idx, int):
-            data = self.get(idx)
+            data = self.get(self.indices()[idx])
             data = data if self.transform is None else self.transform(data)
             return data
 
         # return a subset of the original dataset if a list or slice is passed
         subset = copy.copy(self)
 
-        # monkey-patch the subset to include the correct indices and custom attributes
-        # so it behaves like a normal STADataset for our purposes
         indices = subset.indices()
-        subset._indices = [indices[i] for i in idx]
-
-        subset.scenario_names = sorted([self.scenario_names[i] for i in subset.indices()])
-        subset.scenario_paths = sorted([self.scenario_paths[i] for i in subset.indices()])
-        subset.result_paths = sorted([self.result_paths[i] for i in subset.indices()])
+        subset._indices = sorted([indices[i] for i in idx])
 
         return subset
 
