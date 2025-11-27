@@ -324,7 +324,7 @@ class STADataset(Dataset):
         data = torch.load(Path(self.processed_dir) / f"{scenario}.pt", weights_only=False)
         return data
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx) -> STADataset | HeteroData:
         """
         Handles indexing and slicing of the dataset.
         If an integer is passed, it returns a single data object.
@@ -348,7 +348,7 @@ class STADataset(Dataset):
 def create_splits(
     dataset: STADataset, split: tuple[float, float, float]
 ) -> tuple[
-    tuple[STADataset, STADataset, STADataset],
+    tuple[STADataset | HeteroData, STADataset | HeteroData, STADataset | HeteroData],
     tuple[list, list, list],
 ]:
     """
