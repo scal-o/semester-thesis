@@ -111,6 +111,8 @@ class STADataset(Dataset):
 
         return dataset
 
+    ## ===========================
+    ## === internal properties ===
     @property
     def scenario_paths(self) -> list[Path]:
         """List of scenario paths."""
@@ -126,6 +128,8 @@ class STADataset(Dataset):
         """List of scenario names."""
         return [self._scenario_names[i] for i in self.indices()]
 
+    ## ====================================================
+    ## === pytorch geometric dataset methods (required) ===
     @property
     def raw_file_names(self) -> list[str]:
         """
@@ -403,9 +407,6 @@ class VarTransform(BaseTransform):
     Custom, variable transformation for Pytorch Geometric datasets.
     """
 
-    # define valid transform types
-    VALID_TRANSFORMS = {"log", "norm"}
-
     def __init__(self, target: tuple, transform: str | None = None):
         """
         Args:
@@ -419,18 +420,126 @@ class VarTransform(BaseTransform):
         """
         self.type, self.label = target
 
+        # define valid transform types
+        VALID_TRANSFORMS = {
+            "log": {
+                "normal": self._log_transform,
+                "inverse": self._log_inverse_transform,
+            },
+            "norm": {
+                "normal": self._norm_transform,
+                "inverse": self._norm_inverse_transform,
+            },
+        }
+
         # validate transform type
-        if transform is not None and transform not in self.VALID_TRANSFORMS:
-            valid_list = ", ".join(f"'{t}'" for t in sorted(self.VALID_TRANSFORMS))
+        if transform is not None and transform not in VALID_TRANSFORMS:
+            valid_list = ", ".join(f"'{t}'" for t in sorted(VALID_TRANSFORMS))
             raise ValueError(
                 f"Invalid transform type '{transform}'. Valid options are: {valid_list}, or None."
             )
 
-        self.transform = transform
+        self.transform_fn = VALID_TRANSFORMS.get(transform, {}).get("normal", self._identity)
+        self.inverse_fn = VALID_TRANSFORMS.get(transform, {}).get("inverse", self._identity)
 
         # store scaler parameters
         self.params = {}
 
+    @classmethod
+    def from_config(cls, config: Config) -> Self:
+        """
+        Create transform from configuration object.
+
+        Args:
+            config: Configuration object.
+
+        Returns:
+            VarTransform instance.
+        """
+        # use Config API to get target and transform
+        target = config.get_target()
+        transform_type = config.get_transform()
+
+        return cls(target=target, transform=transform_type)
+
+    ## ======================
+    ## === public methods ===
+    def forward(self, data: HeteroData) -> HeteroData:
+        """
+        Applies the transformation to the data object.
+
+        Args:
+            data: The input HeteroData object.
+
+        Returns:
+            The transformed HeteroData object with the target extracted.
+        """
+        target = self._get_target(data)
+
+        # apply transformation
+        target = self.transform_fn(target)
+
+        data.y = target
+        return data
+
+    def inverse_transform(self, x: torch.Tensor | np.ndarray) -> torch.Tensor | np.ndarray:
+        """
+        Applies the inverse transformation to a tensor or numpy array.
+
+        Args:
+            x: The data to inverse transform (e.g., predictions or targets).
+               Can be either a torch.Tensor or numpy.ndarray.
+
+        Returns:
+            The inverse-transformed data in the same format as the input.
+        """
+
+        if self.transform_fn == self._identity:
+            return self.transform_fn(x)
+
+        # flag if input is numpy array
+        is_numpy = isinstance(x, np.ndarray)
+
+        # transform to tensor: no-op if already tensor
+        x = torch.Tensor(x)
+
+        # apply inverse transformation
+        x = self.inverse_fn(x)
+
+        # transform back to numpy array if necessary
+        x = x.numpy() if is_numpy else x
+
+        return x
+
+    def fit(self, dataset: STADataset) -> None:
+        """
+        Compute normalization statistics across the entire dataset.
+        Only needed for "norm" transform.
+
+        Args:
+            dataset: The dataset to compute statistics from.
+        """
+        if self.transform_fn != self._norm_transform:
+            return
+
+        # collect all target values across dataset
+        all_targets = []
+        for idx in range(len(dataset)):
+            # get raw data without applying transform
+            data = dataset.get(idx)
+            target = self._get_target(data)
+            all_targets.append(target)
+
+        # concatenate all targets and compute statistics
+        all_targets = torch.cat(all_targets)
+
+        # set flag and store parameters
+        self.params["for"] = "norm"
+        self.params["mean"] = all_targets.mean().item()
+        self.params["std"] = all_targets.std().item()
+
+    ## ========================
+    ## === internal methods ===
     def _get_target(self, data: HeteroData) -> torch.Tensor:
         """
         Extracts the target variable from the data object.
@@ -450,109 +559,31 @@ class VarTransform(BaseTransform):
             raise KeyError(f"Target label '{self.label}' not found in data type '{self.type}'.")
         return target
 
-    def fit(self, dataset: "STADataset") -> None:
-        """
-        Compute normalization statistics across the entire dataset.
-        Only needed for "norm" transform.
-
-        Args:
-            dataset: The dataset to compute statistics from.
-        """
-        if self.transform != "norm":
-            return
-
-        # collect all target values across dataset
-        all_targets = []
-        for idx in range(len(dataset)):
-            # get raw data without applying transform
-            data = dataset.get(idx)
-            target = self._get_target(data)
-            all_targets.append(target)
-
-        # concatenate all targets and compute statistics
-        all_targets = torch.cat(all_targets)
-
-        # set flag and store parameters
-        self.params["for"] = "norm"
-        self.params["mean"] = all_targets.mean().item()
-        self.params["std"] = all_targets.std().item()
-
-    def inverse_transform(self, x: torch.Tensor | np.ndarray) -> torch.Tensor | np.ndarray:
-        """
-        Applies the inverse transformation to a tensor or numpy array.
-
-        Args:
-            x: The data to inverse transform (e.g., predictions or targets).
-               Can be either a torch.Tensor or numpy.ndarray.
-
-        Returns:
-            The inverse-transformed data in the same format as the input.
-        """
-        if self.transform is None:
-            return x
-
-        # flag if input is numpy array
-        is_numpy = isinstance(x, np.ndarray)
-
-        # transform to tensor: no-op if already tensor
-        x = torch.Tensor(x)
-
-        # apply inverse transformation
-        if self.transform == "log":
-            x = torch.expm1(x)
-        elif self.transform == "norm":
-            if self.params.get("for", None) != "norm":
-                raise ValueError("Cannot inverse transform: normalization parameters not set")
-            x = x * self.params["std"] + self.params["mean"]
-
-        # transform back to numpy array if necessary
-        x = x.numpy() if is_numpy else x
-
+    def _identity(self, x: torch.Tensor) -> torch.Tensor:
         return x
 
-    @classmethod
-    def from_config(cls, config: Config) -> Self:
-        """
-        Create transform from configuration object.
+    def _log_transform(self, x: torch.Tensor) -> torch.Tensor:
+        return torch.log1p(x)
 
-        Args:
-            config: Configuration object.
+    def _log_inverse_transform(self, x: torch.Tensor) -> torch.Tensor:
+        return torch.expm1(x)
 
-        Returns:
-            VarTransform instance.
-        """
-        # use Config API to get target and transform
-        target = config.get_target()
-        transform_type = config.get_transform()
+    def _norm_transform(self, x: torch.Tensor) -> torch.Tensor:
+        # ensure statistics are computed before transforming
+        if self.params.get("for", None) != "norm":
+            raise ValueError(
+                "Normalization statistics not computed. Call fit() on the dataset first."
+            )
 
-        return cls(target=target, transform=transform_type)
+        return (x - self.params["mean"]) / self.params["std"]
 
-    def forward(self, data: HeteroData) -> HeteroData:
-        """
-        Applies the transformation to the data object.
-
-        Args:
-            data: The input HeteroData object.
-
-        Returns:
-            The transformed HeteroData object with the target extracted.
-        """
-        target = self._get_target(data)
-
-        if self.transform is not None:
-            if self.transform == "log":
-                target = torch.log1p(target)
-            elif self.transform == "norm":
-                # ensure statistics are computed before transforming
-                if self.params.get("for", None) != "norm":
-                    raise ValueError(
-                        "Normalization statistics not computed. Call fit() on the dataset first."
-                    )
-                # apply z-score normalization
-                target = (target - self.params["mean"]) / self.params["std"]
-
-        data.y = target
-        return data
+    def _norm_inverse_transform(self, x: torch.Tensor) -> torch.Tensor:
+        # ensure statistics are computed before transforming
+        if self.params.get("for", None) != "norm":
+            raise ValueError(
+                "Normalization statistics not computed. Call fit() on the dataset first."
+            )
+        return x * self.params["std"] + self.params["mean"]
 
 
 @click.command()
