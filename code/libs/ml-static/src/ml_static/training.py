@@ -1,11 +1,18 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import torch
 import torch.nn as nn
+
+if TYPE_CHECKING:
+    from ml_static.losses import LossWrapper
 
 
 def train(
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
-    criterion: nn.Module,
+    criterion: LossWrapper,
     graph,
 ) -> float:
     """
@@ -24,8 +31,7 @@ def train(
     optimizer.zero_grad()
 
     pred = model(graph)
-    target = graph.y
-    loss = criterion(pred, target)
+    loss = criterion(pred, graph)
     loss.backward()
     optimizer.step()
 
@@ -34,7 +40,7 @@ def train(
 
 def validate(
     model: nn.Module,
-    criterion: nn.Module,
+    criterion: LossWrapper,
     graph,
 ) -> float:
     """
@@ -51,8 +57,7 @@ def validate(
     model.eval()
     with torch.no_grad():
         pred = model(graph)
-        target = graph.y
-        loss = criterion(pred, target)
+        loss = criterion(pred, graph)
 
     return loss.item()
 
@@ -62,7 +67,7 @@ def run_epoch(
     train_loader,
     val_loader,
     optimizer: torch.optim.Optimizer,
-    loss: nn.Module,
+    loss: LossWrapper,
     device: torch.device,
 ) -> tuple[float, float]:
     """
@@ -106,7 +111,7 @@ def run_epoch(
 def run_test(
     model: nn.Module,
     test_loader,
-    loss: nn.Module,
+    loss: LossWrapper,
     device: torch.device,
 ) -> float:
     """

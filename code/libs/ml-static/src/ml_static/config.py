@@ -30,25 +30,19 @@ class Config:
         with open(config_path) as f:
             self._config = yaml.safe_load(f)
 
-    def get_loss_function(self) -> torch.nn.Module:
+    def get_loss_type(self) -> str:
         """
-        Instantiate loss function based on configuration.
-
-        Returns:
-            Initialized loss function module.
-
-        Raises:
-            ValueError: If loss function type is not supported.
+        Get loss type based on configuration.
         """
-        loss_config = self._config.get("loss", {})
-        loss_type = loss_config.get("type", "mse").lower()
+        return self._config.get("loss", {}).get("type", "mse")
 
-        if loss_type == "mse":
-            return torch.nn.MSELoss()
-        elif loss_type == "l1":
-            return torch.nn.L1Loss()
-        else:
-            raise ValueError(f"Unknown loss function type: {loss_type}")
+    def get_loss_params(self) -> dict:
+        """
+        Get loss params (needed for custom loss) from configuration.
+        """
+        params = self._config.get("loss", {}).copy()
+        params.pop("type", None)
+        return params
 
     def get_optimizer(self, model_params) -> torch.optim.Optimizer:
         """

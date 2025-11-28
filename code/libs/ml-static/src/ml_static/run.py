@@ -12,6 +12,7 @@ from ml_static.data import STADataset, create_splits
 from ml_static.model import GNN
 from ml_static.tracker import MLflowtracker
 from ml_static.training import run_epoch, run_test
+from ml_static.losses import LossWrapper
 
 
 def run_training(config: Config, check_run: bool = False) -> tuple:
@@ -63,7 +64,8 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
     model = GNN.from_config(config).to(device)
 
     # define loss and optimizer
-    loss = config.get_loss_function()
+    # loss = config.get_loss_function()
+    loss = LossWrapper.from_config(config)
     optimizer = config.get_optimizer(model.parameters())
     scheduler = config.get_scheduler(optimizer)
 
