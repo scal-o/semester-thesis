@@ -20,6 +20,150 @@ if TYPE_CHECKING:
     from ml_static.config import Config
 
 
+class DatasetSplit:
+    """
+    Class that holds train, val and test splits of a dataset.
+    """
+
+    def __init__(
+        self,
+        dataset: STADataset,
+        split: tuple[float, float, float],
+        transform: post.TargetTransform,
+        seed: int = 42,
+    ):
+        self._dataset = dataset
+        self._split = split
+
+        self.indices = {}
+        self.indices = self._get_split_indices(seed)
+
+        self.data_splits = {}
+        self.data_splits = self._get_data_splits()
+
+        self.transform = transform
+        self._fit_transform()
+        self._inject_transform()
+
+    @classmethod
+    def from_config(cls, config: Config) -> Self:
+        """
+        Create dataset split from configuration object.
+
+        Args:
+            config: Configuration object.
+
+        Returns:
+            DatasetSplit instance.
+        """
+        # create dataset and transform
+        dataset = STADataset.from_config(config)
+        transform = post.TargetTransform.from_config(config)
+
+        # extract split configuration from config
+        split = config.data_split
+
+        # create dataset split
+        dataset_split = cls(dataset, split, transform, seed=config.seed)
+
+        return dataset_split
+
+    def _get_split_indices(self, seed: int = 42) -> dict[str, list]:
+        """
+        Utility function to initialize the split indices.
+        Returns the already computed indices if they exist.
+
+        Returns:
+            Dictionary with train, val and test indices.
+        """
+
+        if any(len(v) > 0 for v in self.indices.values()):
+            return self.indices
+
+        # normalize the sum of the splits
+        split_total = sum(self._split)
+        split = (
+            self._split[0] / split_total,
+            self._split[1] / split_total,
+            self._split[2] / split_total,
+        )
+
+        # determine sizes
+        n_total = len(self._dataset)
+        n_train = int(n_total * split[0])
+        n_val = int(n_total * split[1])
+
+        # generate indices
+        _indices = {}
+        rng = np.random.default_rng(seed)
+        indices = rng.permutation(n_total)
+        _indices["train"] = indices[:n_train].tolist()
+        _indices["val"] = indices[n_train : n_train + n_val].tolist()
+        _indices["test"] = indices[n_train + n_val :].tolist()
+
+        return _indices
+
+    def _get_data_splits(self) -> dict[str, STADataset]:
+        """
+        Utility function to initialize the data splits.
+        Returns the already computed splits if they exist.
+
+        Returns:
+            Dictionary with train, val and test data splits.
+        """
+
+        if any(v is not None for v in self.data_splits.values()):
+            return self.data_splits
+
+        _data_splits = {}
+        for split_name in ["train", "val", "test"]:
+            _data_splits[split_name] = self._dataset[self.indices[split_name]]
+
+        return _data_splits
+
+    def _fit_transform(self) -> None:
+        """
+        Fit the transforms on the training split.
+        """
+
+        if not isinstance(self.transform, post.TargetTransform):
+            return
+
+        train_split = self.data_splits["train"]
+        self.transform.fit(train_split)
+
+    def _inject_transform(self) -> None:
+        """
+        Inject the transforms to the data splits.
+        """
+
+        for split_name in ["train", "val", "test"]:
+            split = self.data_splits[split_name]
+            split.transform = self.transform
+
+    def __getitem__(self, key: str) -> STADataset:
+        """
+        Get the dataset split by key.
+
+        Args:
+            key: One of 'train', 'val', 'test'.
+
+        Returns:
+            The corresponding dataset split.
+
+        Raises:
+            KeyError: If the key is not 'train', 'val' or 'test'.
+            ValueError: If the split is not found.
+        """
+        if key not in ["train", "val", "test"]:
+            raise KeyError("Key must be 'train', 'val' or 'test'.")
+
+        if self.data_splits.get(key) is None:
+            raise ValueError(f"Split {key} not found.")
+
+        return self.data_splits[key]
+
+
 class STADataset(Dataset):
     """
     Pytorch Geometric dataset for static traffic assignment data.
@@ -100,15 +244,8 @@ class STADataset(Dataset):
         Returns:
             STADataset instance.
         """
-        # extract transform configuration from config
-        transform = post.TargetTransform.from_config(config)
-
         # create dataset
-        dataset = cls(config.dataset_path, transform=transform)
-
-        # fit transform on dataset (required for some scalers)
-        if transform is not None:
-            transform.fit(dataset)
+        dataset = cls(config.dataset_path)
 
         return dataset
 
