@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import copy
 from typing import TYPE_CHECKING, Self
 
 import numpy as np
 import torch
 from torch_geometric.data import Dataset
+from torch_geometric.loader import DataLoader
 from torch_geometric.transforms import BaseTransform, Compose
 
 if TYPE_CHECKING:
@@ -71,11 +71,17 @@ class TargetTransform(Compose):
         if not hasattr(self.scaler, "fit"):
             return
 
-        ds = copy.copy(dataset)
+        # use datalaoder to load data objects
+        loader = DataLoader(dataset, batch_size=50, shuffle=False)
+        data = []
 
-        # apply selector to each data object in dataset
-        ds = [self.selector(ds.get(idx)).y for idx in range(len(ds))]
-        self.scaler.fit(ds)
+        # create data list by applying selector to each batch
+        for batch in loader:
+            batch = self.selector(batch)
+            data.append(batch.y)
+
+        # fit scaler on collected data
+        self.scaler.fit(data)
 
 
 class SelectTarget(BaseTransform):
