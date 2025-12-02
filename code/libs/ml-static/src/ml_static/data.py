@@ -281,14 +281,26 @@ class STADataset(Dataset):
                 var_name="destination",
             )
             dmat = dmat.loc[dmat["value"] > 0]
-            dmat = dmat[["origin", "destination"]]
-            dmat = dmat.astype("int32")
+            dmat["value"] = (
+                (dmat["value"] - dmat["value"].min())
+                / (dmat["value"].max() - dmat["value"].min())
+                * 100
+            )
+
+            full_mat = (full_mat - full_mat.min()) / (full_mat.max() - full_mat.min()) * 100
+            # dmat = dmat[["origin", "destination"]]
+            # dmat = dmat.astype("int32")
 
             # create edge index
-            virtual_edges = dmat.values
+            virtual_edges = dmat[["origin", "destination"]].astype("int32").values
+
+            # extract edge features (demand matrix) and standardize (0-100)
+            demand = dmat["value"].values
+            demand = (demand - demand.min()) / (demand.max() - demand.min()) * 100
 
             # convert to tensor
             virtual_edges = torch.tensor(virtual_edges, dtype=torch.long).t()
+            edge_demand = torch.tensor(demand, dtype=torch.float)
 
             # close matrix
             omx_mat.close()
@@ -309,6 +321,7 @@ class STADataset(Dataset):
 
             # append virtual edge data
             data["nodes", "virtual", "nodes"].edge_index = virtual_edges
+            data["nodes", "virtual", "nodes"].edge_demand = edge_demand
 
             # save data to disk
             try:
