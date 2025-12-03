@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Iterator, Self
 
 import click
 import geopandas as gpd
@@ -14,7 +14,7 @@ import torch
 from torch_geometric.data import Dataset, HeteroData
 from tqdm import tqdm
 
-from ml_static.transforms import post
+from ml_static.transforms import SequentialTransform
 
 if TYPE_CHECKING:
     from ml_static.config import Config
@@ -22,145 +22,135 @@ if TYPE_CHECKING:
 
 class DatasetSplit:
     """
-    Class that holds train, val and test splits of a dataset.
+    Manages train/val/test splits of a dataset with transforms.
+
+    Handles splitting, transform fitting on training data, and provides
+    convenient access to splits and indices.
     """
 
     def __init__(
         self,
         dataset: STADataset,
         split: tuple[float, float, float],
-        transform: post.TargetTransform,
+        transform: SequentialTransform | None = None,
         seed: int = 42,
     ):
-        self._dataset = dataset
-        self._split = split
+        """
+        Create dataset splits with optional transform.
 
-        self.indices = {}
-        self.indices = self._get_split_indices(seed)
+        Args:
+            dataset: Full dataset to split.
+            split: Tuple of (train, val, test) proportions.
+            transform: Transform to fit on training data and apply to all splits.
+            seed: Random seed for reproducible splits.
+        """
+        self._dataset: STADataset = dataset
+        self._split: tuple[float, float, float] = split
 
-        self.data_splits = {}
-        self.data_splits = self._get_data_splits()
+        # generate split indices
+        self.indices: dict[str, list[int]] = self._create_split_indices(seed)
 
-        self.transform = transform
-        self._fit_transform()
-        self._inject_transform()
+        # create dataset splits
+        self.data_splits: dict[str, STADataset] = self._create_data_splits()
+
+        # fit and inject transform if provided
+        if transform is not None:
+            self.transform: SequentialTransform = transform
+            self._fit_transform()
+            self._inject_transform()
 
     @classmethod
-    def from_config(cls, config: Config) -> Self:
+    def from_config(cls, config: Config, force_reload: bool = False) -> Self:
         """
         Create dataset split from configuration object.
 
         Args:
             config: Configuration object.
+            force_reload: Whether to force dataset reload.
 
         Returns:
             DatasetSplit instance.
         """
-        # create dataset and transform
-        dataset = STADataset.from_config(config)
-        transform = post.TargetTransform.from_config(config)
+        dataset: STADataset = STADataset.from_config(config, force_reload=force_reload)
+        transform = SequentialTransform.from_config(config, stage="post")
+        seed = config.training.seed if config.training.seed is not None else 42
 
-        # extract split configuration from config
-        split = config.data_split
-
-        # create dataset split
-        dataset_split = cls(dataset, split, transform, seed=config.seed)
-
-        return dataset_split
-
-    def _get_split_indices(self, seed: int = 42) -> dict[str, list]:
-        """
-        Utility function to initialize the split indices.
-        Returns the already computed indices if they exist.
-
-        Returns:
-            Dictionary with train, val and test indices.
-        """
-
-        if any(len(v) > 0 for v in self.indices.values()):
-            return self.indices
-
-        # normalize the sum of the splits
-        split_total = sum(self._split)
-        split = (
-            self._split[0] / split_total,
-            self._split[1] / split_total,
-            self._split[2] / split_total,
+        return cls(
+            dataset=dataset,
+            split=config.dataset.split,
+            transform=transform,
+            seed=seed,
         )
 
-        # determine sizes
-        n_total = len(self._dataset)
-        n_train = int(n_total * split[0])
-        n_val = int(n_total * split[1])
-
-        # generate indices
-        _indices = {}
-        rng = np.random.default_rng(seed)
-        indices = rng.permutation(n_total)
-        _indices["train"] = indices[:n_train].tolist()
-        _indices["val"] = indices[n_train : n_train + n_val].tolist()
-        _indices["test"] = indices[n_train + n_val :].tolist()
-
-        return _indices
-
-    def _get_data_splits(self) -> dict[str, STADataset]:
+    def _create_split_indices(self, seed: int) -> dict[str, list[int]]:
         """
-        Utility function to initialize the data splits.
-        Returns the already computed splits if they exist.
+        Generate train/val/test indices.
+
+        Args:
+            seed: Random seed for reproducibility.
 
         Returns:
-            Dictionary with train, val and test data splits.
+            Dictionary mapping split names to index lists.
         """
+        # normalize split proportions
+        split_total = sum(self._split)
+        normalized = tuple(s / split_total for s in self._split)
 
-        if any(v is not None for v in self.data_splits.values()):
-            return self.data_splits
+        # calculate split sizes
+        n_total = len(self._dataset)
+        n_train = int(n_total * normalized[0])
+        n_val = int(n_total * normalized[1])
 
-        _data_splits = {}
-        for split_name in ["train", "val", "test"]:
-            _data_splits[split_name] = self._dataset[self.indices[split_name]]
+        # generate shuffled indices
+        rng = np.random.default_rng(seed)
+        indices = rng.permutation(n_total)
 
-        return _data_splits
+        return {
+            "train": indices[:n_train].tolist(),
+            "val": indices[n_train : n_train + n_val].tolist(),
+            "test": indices[n_train + n_val :].tolist(),
+        }
+
+    def _create_data_splits(self) -> dict[str, STADataset]:
+        """
+        Create dataset splits using computed indices.
+
+        Returns:
+            Dictionary mapping split names to dataset subsets.
+        """
+        # indices.items() always returns list[int] values, so indexing returns STADataset
+        splits: dict[str, STADataset] = {}
+        for split_name, indices in self.indices.items():
+            subset = self._dataset[indices]
+            assert isinstance(subset, STADataset), "Expected STADataset for list indexing"
+            splits[split_name] = subset
+        return splits
 
     def _fit_transform(self) -> None:
-        """
-        Fit the transforms on the training split.
-        """
-
-        if not isinstance(self.transform, post.TargetTransform):
-            return
-
+        """Fit transform on training split."""
         train_split = self.data_splits["train"]
-        self.transform.fit(train_split)
+        self.transform.fit_dataset(train_split)
 
     def _inject_transform(self) -> None:
-        """
-        Inject the transforms to the data splits.
-        """
-
-        for split_name in ["train", "val", "test"]:
-            split = self.data_splits[split_name]
+        """Apply fitted transform to all splits."""
+        for split in self.data_splits.values():
             split.transform = self.transform
 
     def __getitem__(self, key: str) -> STADataset:
         """
-        Get the dataset split by key.
+        Get dataset split by name.
 
         Args:
             key: One of 'train', 'val', 'test'.
 
         Returns:
-            The corresponding dataset split.
+            Requested dataset split.
 
         Raises:
-            KeyError: If the key is not 'train', 'val' or 'test'.
-            ValueError: If the split is not found.
+            KeyError: If key is not valid.
         """
-        if key not in ["train", "val", "test"]:
-            raise KeyError("Key must be 'train', 'val' or 'test'.")
-
-        if self.data_splits.get(key) is None:
-            raise ValueError(f"Split {key} not found.")
-
+        if key not in self.data_splits:
+            raise KeyError(f"Invalid split key '{key}'. Must be 'train', 'val', or 'test'.")
         return self.data_splits[key]
 
 
@@ -174,11 +164,14 @@ class STADataset(Dataset):
     The node and link features closely resemble the ones presented in Liu & Meidani (2024).
     """
 
-    def __init__(self, network_dir: Path | str, **kwargs):
+    def __init__(self, network_dir: Path | str, model: str = "default", **kwargs):
         """
         Args:
-            root (str): Root directory where the dataset should be saved.
+            network_dir (root) (str): Root directory where the dataset should be saved.
                         This directory is split into 'raw' and 'processed' subdirectories.
+            model (str, optional): The model type for which the dataset is being prepared.
+                        If "default", no pre-transforms are applied, and the dataset is created
+                        as is.
             transform (callable, optional): A function/transform that takes in an
                                            `torch_geometric.data.Data` object and returns a
                                            transformed version. The data object will be
@@ -188,6 +181,220 @@ class STADataset(Dataset):
                                                 a transformed version. The data object will be
                                                 transformed before being saved to disk.
                                                 (default: None)
+        """
+        # create root directory for the dataset inside the network directory
+        # i.e. alongside the other scenarios_* directories
+        self.root = Path(network_dir) / "scenarios_sta_mldata"
+        if not self.root.is_dir():
+            self.root.mkdir()
+
+        # define dirs
+        self.network_dir = Path(network_dir)
+
+        # save model type
+        self.model = model
+
+        # define scenario names
+        # retrieve all available scenarios and results
+        scenarios_dir = self.network_dir / "scenarios_geojson"
+        scenarios = list(scenarios_dir.glob("scenario_*"))
+        scenarios = sorted(scenarios, key=lambda p: p.name)
+
+        # remove scenario 0
+        if (scenarios_dir / "scenario_00000").is_dir():
+            scenarios.remove(scenarios_dir / "scenario_00000")
+
+        self._scenario_paths: list[Path] = scenarios
+        self._scenario_names: list[str] = [scenario.name for scenario in scenarios]
+
+        # set default indices to include all scenarios
+        self._indices = range(len(self._scenario_names))
+
+        # init base class
+        super().__init__(str(self.root), **kwargs)
+
+    @classmethod
+    def from_config(cls, config: Config, force_reload: bool = False) -> Self:
+        """
+        Create dataset from configuration object.
+
+        Args:
+            config: Configuration object.
+
+        Returns:
+            STADataset instance.
+        """
+
+        # extract model name
+        model_name = config.model.name
+
+        # create pre-transform from config
+        pre_transform = SequentialTransform.from_config(config, stage="pre")
+
+        # if force_reload is true, force reloading of the basedataset as well
+        if force_reload:
+            print("Forcing dataset reload...")
+            BaseDataset.from_config(config, force_reload=True)
+
+        # create dataset with model name and pre-transform
+        dataset = cls(
+            config.dataset.full_path,
+            model=model_name,
+            pre_transform=pre_transform,
+            force_reload=force_reload,
+        )
+
+        return dataset
+
+    ## ===========================
+    ## === internal properties ===
+    @property
+    def scenario_paths(self) -> list[Path]:
+        """List of scenario paths."""
+        return [self._scenario_paths[i] for i in self.indices()]
+
+    @property
+    def scenario_names(self) -> list[str]:
+        """List of scenario names."""
+        return [self._scenario_names[i] for i in self.indices()]
+
+    ## ====================================================
+    ## === pytorch geometric dataset methods (required) ===
+    @property
+    def raw_dir(self) -> str:
+        """
+        Returns the directory where the raw data is stored.
+        """
+        return str(Path(self.root) / "preprocessed")
+
+    @property
+    def processed_dir(self) -> str:
+        """
+        Returns the directory where the processed data is stored.
+        """
+        return str(Path(self.root) / f"processed_{self.model}")
+
+    @property
+    def raw_file_names(self) -> list[str]:
+        """
+        Returns the list of files that must be present in the raw_dir directory
+        in order to skip the download step.
+        The file names are derived from the preprocessed scenarios.
+        """
+        scenario_names = self._scenario_names
+
+        # to create a complete graph we need the scenario_xxxxx.pt file
+
+        return [f"{scenario}.pt" for scenario in scenario_names]
+
+    @property
+    def processed_file_names(self) -> list[str]:
+        """
+        Return the list of files that must be present in the processed_dir directory
+        in order to skip the processing step.
+        The file names are derived from the scenarios available in the
+        scenarios_sta_results directory.
+        """
+        scenario_names = self._scenario_names
+
+        # we expect to find a single .pt file for every scenario
+        return [f"{scenario}.pt" for scenario in scenario_names]
+
+    def download(self):
+        """
+        The "download" consists in creaating the BaseDataset if not already present.
+        This will automatically create the raw files needed for this dataset.
+        """
+
+        print("--- Dataset Download ---")
+        BaseDataset(self.network_dir, force_reload=True)
+        print("--- Dataset Download Complete ---")
+
+    def process(self):
+        """
+        Processes raw data and saves it into the `processed_dir`.
+        """
+
+        print("--- Dataset Processing ---")
+        print(f"Network: {self.network_dir.name}")
+        print(f"Path: {self.network_dir}")
+
+        scenario_names = self._scenario_names
+
+        for scenario in tqdm(scenario_names, desc="Processing data"):
+            # raw dir
+            src = Path(self.raw_dir)
+
+            # load base data
+            data = torch.load(src / f"{scenario}.pt", weights_only=False)
+
+            # set num_nodes: this is a pytorch geometric requirement,
+            # as some transforms make it unable to determine it dynamically
+            data["nodes"].num_nodes = data["_raw"].node_coords.size(0)
+
+            # apply pre-transform if defined
+            if self.pre_transform is not None:
+                data = self.pre_transform(data)
+
+            try:
+                data.validate()
+            except AssertionError as e:
+                raise AssertionError(f"Data validation failed: {e}") from e
+
+            torch.save(data, Path(self.processed_dir) / f"{scenario}.pt")
+
+        print("--- Dataset Processing Complete ---")
+
+    def len(self) -> int:
+        return len(self.processed_file_names)
+
+    def get(self, idx: int) -> HeteroData:
+        scenario = self._scenario_names[idx]
+        data = torch.load(Path(self.processed_dir) / f"{scenario}.pt", weights_only=False)
+        return data
+
+    def __getitem__(self, idx) -> STADataset | HeteroData:
+        """
+        Handles indexing and slicing of the dataset.
+        If an integer is passed, it returns a single data object.
+        If a slice or list of indices is passed, it returns a `Subset` object
+        with the sliced custom attributes attached.
+        """
+        if isinstance(idx, int):
+            data = self.get(self.indices()[idx])
+            data = data if self.transform is None else self.transform(data)
+            return data
+
+        # return a subset of the original dataset if a list or slice is passed
+        subset = copy.copy(self)
+
+        indices = subset.indices()
+        subset._indices = sorted([indices[i] for i in idx])
+
+        return subset
+
+    def __iter__(self) -> Iterator[HeteroData]:
+        for i in range(len(self)):
+            yield self[i]
+
+
+class BaseDataset(Dataset):
+    """
+    Pytorch Geometric dataset for static traffic assignment data.
+
+    The BaseDataset serves as the first processing step of the raw
+    traffic assignment data, converting it into standardized Pytorch Geometric
+    Data objects.
+
+    Each sample in the dataset is a graph representing the network state
+    from a single scenario's static traffic assignment results.
+    """
+
+    def __init__(self, network_dir: Path | str, force_reload: bool = False):
+        """
+        Args:
+            network_dir (root) (str): Root directory where the dataset should be saved.
+                        This directory is split into 'raw' and 'processed' subdirectories.
         """
         # create root directory for the dataset inside the network directory
         # i.e. alongside the other scenarios_* directories
@@ -230,10 +437,10 @@ class STADataset(Dataset):
         self._indices = range(len(self._scenario_names))
 
         # init base class
-        super().__init__(str(self.root), **kwargs)
+        super().__init__(str(self.root), force_reload=force_reload)
 
     @classmethod
-    def from_config(cls, config: Config) -> Self:
+    def from_config(cls, config: Config, force_reload: bool = False) -> Self:
         """
         Create dataset from configuration object.
 
@@ -245,7 +452,7 @@ class STADataset(Dataset):
             STADataset instance.
         """
         # create dataset
-        dataset = cls(config.dataset_path)
+        dataset = cls(config.dataset.full_path, force_reload=force_reload)
 
         return dataset
 
@@ -268,6 +475,13 @@ class STADataset(Dataset):
 
     ## ====================================================
     ## === pytorch geometric dataset methods (required) ===
+    @property
+    def processed_dir(self) -> str:
+        """
+        Returns the directory where the processed data is stored.
+        """
+        return str(Path(self.root) / "preprocessed")
+
     @property
     def raw_file_names(self) -> list[str]:
         """
@@ -338,7 +552,7 @@ class STADataset(Dataset):
         Processes raw data and saves it into the `processed_dir`.
         """
 
-        print("--- Dataset Processing ---")
+        print("--- Base Dataset Processing ---")
         print(f"Network: {self.network_dir.name}")
         print(f"Path: {self.network_dir}")
 
@@ -364,18 +578,12 @@ class STADataset(Dataset):
                 columns=range(0, len(node_df)),
                 fill_value=0.0,
             )
-
-            # scale demand matrix between 0 and 100
-            full_mat = (full_mat - full_mat.min()) / (full_mat.max() - full_mat.min()) * 100
-
             full_mat = full_mat.values
-
-            # concatenate node coordinates and od matrix to create node features
-            node_features = np.concat((full_mat, node_coords), axis=1)
+            omx_mat.close()
 
             # convert to tensors
-            node_coords = torch.tensor(node_coords, dtype=torch.float)
-            node_features = torch.tensor(node_features, dtype=torch.float)
+            node_coords = torch.as_tensor(node_coords, dtype=torch.float)
+            od_mat = torch.as_tensor(full_mat, dtype=torch.float)
 
             ##
             ## 2. Real Links
@@ -385,29 +593,26 @@ class STADataset(Dataset):
             link_df = pd.read_parquet(src / f"{scenario}.parquet")
 
             # create edge index (0-based index for pytorch)
-            edges = link_df[["a_node", "b_node"]].values
-            edges -= 1
+            real_edges = link_df[["a_node", "b_node"]].values
+            real_edges -= 1
 
             # extract edge features and labels
-            edge_features = link_df[["capacity", "free_flow_time"]].values
+            edge_capacity = link_df["capacity"].values
+            edge_free_flow_time = link_df["free_flow_time"].values
             edge_vcr = link_df["volume_capacity_ratio"].values
             edge_flow = link_df["flow"].values
 
-            # standardize edge features (z-score normalization)
-            edge_features = (edge_features - edge_features.mean(axis=0)) / (
-                edge_features.std(axis=0)
-            )
-
             # convert to tensors
-            edges = torch.tensor(edges, dtype=torch.long).t()
-            edge_features = torch.tensor(edge_features, dtype=torch.float)
-            edge_vcr = torch.tensor(edge_vcr, dtype=torch.float)
-            edge_flow = torch.tensor(edge_flow, dtype=torch.float)
+            real_edges = torch.as_tensor(real_edges, dtype=torch.long).t()
+            edge_capacity = torch.as_tensor(edge_capacity, dtype=torch.float)
+            edge_free_flow_time = torch.as_tensor(edge_free_flow_time, dtype=torch.float)
+            edge_vcr = torch.as_tensor(edge_vcr, dtype=torch.float)
+            edge_flow = torch.as_tensor(edge_flow, dtype=torch.float)
 
             ##
             ## 3. Virtual Links
             # we gather the virtual links from the od matrix
-            dmat = pd.DataFrame(od_mat)
+            dmat = pd.DataFrame(full_mat)
 
             # add origin col
             dmat.insert(0, "origin", np.array(range(0, len(dmat))))
@@ -419,53 +624,26 @@ class STADataset(Dataset):
                 var_name="destination",
             )
             dmat = dmat.loc[dmat["value"] > 0]
-            dmat["value"] = (
-                (dmat["value"] - dmat["value"].min())
-                / (dmat["value"].max() - dmat["value"].min())
-                * 100
-            )
-
-            full_mat = (full_mat - full_mat.min()) / (full_mat.max() - full_mat.min()) * 100
-            # dmat = dmat[["origin", "destination"]]
-            # dmat = dmat.astype("int32")
 
             # create edge index
             virtual_edges = dmat[["origin", "destination"]].astype("int32").values
 
-            # extract edge features (demand matrix) and standardize (0-100)
-            demand = dmat["value"].values
-            demand = (demand - demand.min()) / (demand.max() - demand.min()) * 100
-
             # convert to tensor
             virtual_edges = torch.tensor(virtual_edges, dtype=torch.long).t()
-            edge_demand = torch.tensor(demand, dtype=torch.float)
-
-            # close matrix
-            omx_mat.close()
 
             ##
             ## 4. Data
             data = HeteroData()
 
-            # append node data
-            data["nodes"].x = node_features
-            data["nodes"].pos = node_coords
-
-            # append real edge data
-            data["nodes", "real", "nodes"].edge_index = edges
-            data["nodes", "real", "nodes"].edge_features = edge_features
-            data["nodes", "real", "nodes"].edge_vcr = edge_vcr
-            data["nodes", "real", "nodes"].edge_flow = edge_flow
-
-            # append virtual edge data
-            data["nodes", "virtual", "nodes"].edge_index = virtual_edges
-            data["nodes", "virtual", "nodes"].edge_demand = edge_demand
-
-            # save data to disk
-            try:
-                data.validate()
-            except AssertionError as e:
-                raise AssertionError(f"Data validation failed: {e}") from e
+            # Store raw data in _raw namespace for builders to access
+            data["_raw"].node_coords = node_coords
+            data["_raw"].demand = od_mat
+            data["_raw"].real_index = real_edges
+            data["_raw"].virtual_index = virtual_edges
+            data["_raw"].edge_capacity = edge_capacity
+            data["_raw"].edge_free_flow_time = edge_free_flow_time
+            data["_raw"].edge_vcr = edge_vcr
+            data["_raw"].edge_flow = edge_flow
 
             torch.save(data, Path(self.processed_dir) / f"{scenario}.pt")
 
@@ -479,7 +657,7 @@ class STADataset(Dataset):
         data = torch.load(Path(self.processed_dir) / f"{scenario}.pt", weights_only=False)
         return data
 
-    def __getitem__(self, idx) -> STADataset | HeteroData:
+    def __getitem__(self, idx) -> HeteroData:
         """
         Handles indexing and slicing of the dataset.
         If an integer is passed, it returns a single data object.
@@ -487,17 +665,9 @@ class STADataset(Dataset):
         with the sliced custom attributes attached.
         """
         if isinstance(idx, int):
-            data = self.get(self.indices()[idx])
-            data = data if self.transform is None else self.transform(data)
-            return data
-
-        # return a subset of the original dataset if a list or slice is passed
-        subset = copy.copy(self)
-
-        indices = subset.indices()
-        subset._indices = sorted([indices[i] for i in idx])
-
-        return subset
+            return self.get(self.indices()[idx])
+        else:
+            raise NotImplementedError("Slicing is not implemented for BaseDataset.")
 
 
 def create_splits(
