@@ -49,11 +49,7 @@ class LossWrapper(nn.Module):
         Returns:
             LossWrapper instance.
         """
-        # use Config API to get loss
-        loss_type = config.get_loss_type()
-        loss_params = config.get_loss_params()
-
-        return cls(loss_type, **loss_params)
+        return cls(config.loss.type, **config.loss.kwargs)
 
     ## === forward call ===
     def forward(self, pred, data):
