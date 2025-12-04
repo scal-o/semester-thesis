@@ -11,9 +11,43 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 import yaml
+
+# =============================================================================
+# Model Architecture Protocol
+# =============================================================================
+
+
+class ModelArchitectureConfig(Protocol):
+    """
+    Protocol that all model architecture configs must satisfy.
+
+    This defines the minimal interface without forcing inheritance.
+    Each model can define its own dataclass structure in its module.
+    """
+
+    @classmethod
+    def from_dict(cls, data: dict) -> ModelArchitectureConfig:
+        """Parse config from dictionary.
+
+        Args:
+            data: Dictionary containing architecture configuration.
+
+        Returns:
+            Parsed architecture config instance.
+        """
+        ...
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert config to dict for backward compatibility."""
+        ...
+
+    def validate(self) -> None:
+        """Validate architecture-specific constraints."""
+        ...
+
 
 # =============================================================================
 # Configuration Schema (Pure Data Structures)
@@ -82,9 +116,20 @@ class ModelConfig:
     """Configuration for model architecture."""
 
     name: str = "GNN"
+    type: str = "HetGAT"  # Model type for factory lookup
     input_channels: int | None = None  # None means infer from data
     hidden_channels: int = 32
     output_channels: int = 16
+
+
+@dataclass
+class ModelConfigWithArchitecture:
+    """Model configuration with typed architecture."""
+
+    type: str = "HetGAT"
+
+    # Architecture loaded dynamically based on type
+    architecture: ModelArchitectureConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -142,7 +187,7 @@ class Config:
     all sub-configurations as typed, validated dataclasses.
     """
 
-    model: ModelConfig = field(default_factory=ModelConfig)
+    model: ModelConfigWithArchitecture = field(default_factory=ModelConfigWithArchitecture)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
@@ -172,7 +217,36 @@ class ConfigLoader:
     - Loading main run config
     - Loading model-specific config with transforms
     - Merging default transforms with overrides
+    - Dynamic loading of model-specific architecture configs
     """
+
+    # Registry mapping model types to their config classes
+    MODEL_CONFIG_CLASSES: dict[str, type[ModelArchitectureConfig]] = {}
+
+    @classmethod
+    def register_config_class(cls, model_type: str):
+        """Decorator to register a model architecture config class.
+
+        Args:
+            model_type: Model type identifier (e.g., 'HetGAT').
+
+        Returns:
+            Decorator function.
+
+        Example:
+            @ConfigLoader.register_config_class('HetGAT')
+            @dataclass(frozen=True)
+            class HetGATArchitectureConfig:
+                ...
+        """
+
+        def decorator(config_class):
+            if model_type in cls.MODEL_CONFIG_CLASSES:
+                raise ValueError(f"Config class for '{model_type}' is already registered.")
+            cls.MODEL_CONFIG_CLASSES[model_type] = config_class
+            return config_class
+
+        return decorator
 
     @classmethod
     def from_yaml(
@@ -202,8 +276,16 @@ class ConfigLoader:
         with open(config_path) as f:
             raw_config = yaml.safe_load(f)
 
+        # parse model type (single source of truth for model identification)
+        model_type = raw_config.get("model", {}).get("type", "HetGAT")
+
         # parse main config sections
-        model = cls._parse_model_config(raw_config.get("model", {}))
+        model = cls._parse_model_config(
+            raw_config.get("model", {}),
+            model_type,
+            model_config_path,
+            config_path,
+        )
         training = cls._parse_training_config(raw_config.get("training", {}))
         optimizer = cls._parse_optimizer_config(raw_config.get("optimizer", {}))
         scheduler = cls._parse_scheduler_config(raw_config.get("scheduler", {}))
@@ -217,7 +299,7 @@ class ConfigLoader:
         pre_transforms: tuple[BuilderTransformConfig, ...] = tuple()
         post_transforms: tuple[BuilderTransformConfig | ScalerTransformConfig, ...] = tuple()
         if model_config_path is None:
-            model_config_path = config_path.parent / f"conf_model_{model.name}.yaml"
+            model_config_path = config_path.parent / f"conf_model_{model_type}.yaml"
 
         if model_config_path.exists():
             pre_transforms, post_transforms = cls._load_model_transforms(model_config_path)
@@ -240,13 +322,62 @@ class ConfigLoader:
         )
 
     @classmethod
-    def _parse_model_config(cls, data: dict) -> ModelConfig:
-        """Parse model configuration section."""
-        return ModelConfig(
-            name=data.get("name", "GNN"),
-            input_channels=data.get("input_channels"),
-            hidden_channels=data.get("hidden_channels", 32),
-            output_channels=data.get("output_channels", 16),
+    def _parse_model_config(
+        cls,
+        data: dict,
+        model_type: str,
+        model_config_path: Path | None,
+        config_path: Path,
+    ) -> ModelConfigWithArchitecture:
+        """Parse model configuration section with dynamic architecture loading.
+
+        Args:
+            data: Model section from main config.
+            model_type: Model type identifier (single source of truth).
+            model_config_path: Optional explicit path to model config.
+            config_path: Path to main config (for relative resolution).
+
+        Returns:
+            ModelConfigWithArchitecture instance.
+        """
+        # Determine model config file path using model_type
+        if model_config_path is None:
+            model_config_path = config_path.parent / f"conf_model_{model_type}.yaml"
+
+        # Load model-specific architecture
+        architecture = None
+
+        if model_config_path.exists():
+            if model_type not in cls.MODEL_CONFIG_CLASSES:
+                raise ValueError(
+                    f"No config class registered for model type '{model_type}'. "
+                    f"Available types: {list(cls.MODEL_CONFIG_CLASSES.keys())}"
+                )
+
+            config_class = cls.MODEL_CONFIG_CLASSES[model_type]
+
+            # Read YAML file
+            with open(model_config_path) as f:
+                model_data = yaml.safe_load(f)
+
+            # Parse using the config class's from_dict method
+            try:
+                architecture = config_class.from_dict(model_data.get("architecture", {}))
+                if hasattr(architecture, "validate"):
+                    architecture.validate()
+            except Exception as e:
+                raise ValueError(
+                    f"Failed to load architecture for model type '{model_type}': {e}"
+                ) from e
+        else:
+            raise FileNotFoundError(
+                f"Model config file not found: {model_config_path}. "
+                f"Expected config for model type '{model_type}'."
+            )
+
+        return ModelConfigWithArchitecture(
+            type=model_type,
+            architecture=architecture,
         )
 
     @classmethod

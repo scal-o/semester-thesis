@@ -225,8 +225,8 @@ class STADataset(Dataset):
             STADataset instance.
         """
 
-        # extract model name
-        model_name = config.model.name
+        # extract model type
+        model_name = config.model.type
 
         # create pre-transform from config
         pre_transform = SequentialTransform.from_config(config, stage="pre")
