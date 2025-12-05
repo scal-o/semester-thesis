@@ -19,11 +19,9 @@ from tqdm import tqdm
 from ml_static import reporting as rep
 
 if TYPE_CHECKING:
-    from numpy.typing import NDArray
     from torch_geometric.data import Dataset
 
-    from ml_static.data import STADataset
-    from ml_static.model import GNN
+    from ml_static.data import DatasetSplit, STADataset
 
 
 # env vars to load
@@ -110,26 +108,20 @@ class MLflowtracker:
         """
         mlflow.log_metric("test_loss", test_loss)
 
-    def log_split_indices(self, train_idx: NDArray, val_idx: NDArray, test_idx: NDArray) -> None:
-        """Log train/val/test split indices as artifacts.
+    def log_dataset_info(self, dataset_split) -> None:
+        """Log dataset split information.
 
         Args:
-            train_idx: Array of training set indices.
-            val_idx: Array of validation set indices.
-            test_idx: Array of test set indices.
+            dataset_split: DatasetSplit instance containing split indices.
         """
-
-        with tempfile.TemporaryDirectory() as dirname:
-            tempdir = Path(dirname)
-
-            # save indices to temporary files
-            np.savetxt(tempdir / "train_indices.txt", train_idx, fmt="%d")
-            np.savetxt(tempdir / "val_indices.txt", val_idx, fmt="%d")
-            np.savetxt(tempdir / "test_indices.txt", test_idx, fmt="%d")
-
-            # log as artifacts
-            tempdir = str(tempdir.absolute())
-            mlflow.log_artifacts(tempdir, artifact_path="split_indices")
+        # log split sizes
+        mlflow.log_params(
+            {
+                "train_size": len(dataset_split.indices["train"]),
+                "val_size": len(dataset_split.indices["val"]),
+                "test_size": len(dataset_split.indices["test"]),
+            }
+        )
 
     def log_training_curves(self) -> None:
         """Generate and log training curves."""
@@ -148,17 +140,17 @@ class MLflowtracker:
         mlflow.log_figure(fig, "training_stats/training_curves.png")
         plt.close(fig)
 
-    def log_model(self, model: GNN, model_name: str, data) -> None:
+    def log_model(self, model: torch.nn.Module, model_type: str, data) -> None:
         """Log model with related artifacts.
 
         Logs:
-        - model weights (via PyTorch)
+        - model state dict (via PyTorch)
         - source code (ml_static module)
         - model summary (via torch_geometric)
 
         Args:
             model: The trained model to log.
-            model_name: Name of the model.
+            model_type: Type/name of the model (e.g., 'HetGAT').
             data: Sample data for generating model summary.
         """
 
@@ -169,11 +161,10 @@ class MLflowtracker:
         with tempfile.TemporaryDirectory() as dirname:
             tempdir = Path(dirname)
 
-            # save source code and config
-            # TODO: if passing custom config to the cli, copy that instead of the default
+            # save source code
             shutil.copytree(code_dir, tempdir, dirs_exist_ok=True)
 
-            # save model weights and initialization parameters
+            # save model checkpoint
             checkpoint = model.extract_checkpoint()
             torch.save(checkpoint, tempdir / "model.pt")
 

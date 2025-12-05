@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
+import torch
 import torch.nn as nn
 
 from ml_static.config import ConfigLoader
@@ -161,3 +163,49 @@ class HetGAT(nn.Module):
         z = self.predictor(g, graph)
 
         return z
+
+    def extract_checkpoint(self) -> dict:
+        """Extract model checkpoint for saving.
+
+        Returns:
+            Dictionary containing state_dict and model metadata.
+        """
+        return {
+            "state_dict": self.state_dict(),
+            "model_type": "HetGAT",
+        }
+
+    @classmethod
+    def from_checkpoint(cls, config: Config, checkpoint_path: Path | str) -> Self:
+        """Load HetGAT model from checkpoint file.
+
+        Args:
+            config: Configuration object for model architecture.
+            checkpoint_path: Path to checkpoint file (.pt).
+
+        Returns:
+            Loaded HetGAT model.
+
+        Raises:
+            FileNotFoundError: If checkpoint file doesn't exist.
+            ValueError: If checkpoint is incompatible with model.
+        """
+        checkpoint_path = Path(checkpoint_path)
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+        checkpoint = torch.load(checkpoint_path, weights_only=False)
+
+        # verify model type
+        if checkpoint.get("model_type") != "HetGAT":
+            raise ValueError(
+                f"Checkpoint model type '{checkpoint.get('model_type')}' does not match HetGAT"
+            )
+
+        # create model from config
+        model = cls.from_config(config)
+
+        # load state dict
+        model.load_state_dict(checkpoint["state_dict"])
+
+        return model
