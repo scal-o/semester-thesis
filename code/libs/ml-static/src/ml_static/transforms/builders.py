@@ -137,6 +137,17 @@ def real_edges_add_flow(data: HeteroData) -> HeteroData:
     return data
 
 
+def real_edges_stack_capacity_free_flow(data: HeteroData) -> HeteroData:
+    """
+    Concatenate real edge features (capacity and free flow time).
+    """
+    edge_type = ("nodes", "real", "nodes")
+    data[edge_type].edge_features = torch.stack(
+        [data["_raw"].edge_capacity, data["_raw"].edge_free_flow_time], dim=1
+    )
+    return data
+
+
 # === Virtual Edges Builders ===
 def virtual_edges_add_index(data: HeteroData) -> HeteroData:
     """
@@ -217,6 +228,7 @@ BUILDERS: dict[str, Callable[[HeteroData], HeteroData]] = {
     "real_edges_add_vcr": real_edges_add_vcr,
     "real_edges_add_flow": real_edges_add_flow,
     "real_edges_add_index": real_edges_add_index,
+    "real_edges_stack_capacity_free_flow": real_edges_stack_capacity_free_flow,
     "virtual_edges_add_index": virtual_edges_add_index,
     "nodes_clean_demand": nodes_clean_demand,
     "nodes_clean_coords": nodes_clean_coords,
