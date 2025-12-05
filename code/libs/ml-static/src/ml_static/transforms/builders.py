@@ -20,7 +20,35 @@ if TYPE_CHECKING:
     from ml_static.data import STADataset
 
 
+# === Builder Registry ===
+BUILDERS_REGISTRY: dict[str, Callable[[HeteroData], HeteroData]] = {}
+
+
+def register_builder(name: str):
+    """
+    A decorator to register a builder function in the builder registry.
+
+    Args:
+        name: Name to register the builder under.
+
+    Returns:
+        Decorator function.
+
+    Raises:
+        ValueError: If builder name is already registered.
+    """
+
+    def decorator(func):
+        if name in BUILDERS_REGISTRY:
+            raise ValueError(f"Builder '{name}' is already registered.")
+        BUILDERS_REGISTRY[name] = func
+        return func
+
+    return decorator
+
+
 # === Node Builders ===
+@register_builder("nodes_add_demand")
 def nodes_add_demand(data: HeteroData) -> HeteroData:
     """
     Add demand from raw data to nodes.
@@ -29,6 +57,7 @@ def nodes_add_demand(data: HeteroData) -> HeteroData:
     return data
 
 
+@register_builder("nodes_add_coords")
 def nodes_add_coords(data: HeteroData) -> HeteroData:
     """
     Add coordinates from raw data to nodes.
@@ -37,6 +66,7 @@ def nodes_add_coords(data: HeteroData) -> HeteroData:
     return data
 
 
+@register_builder("nodes_concat_demand_coords_scaled")
 def nodes_concat_demand_coords_scaled(data: HeteroData) -> HeteroData:
     """
     Concatenate nodes.demand and nodes.coords into nodes.x.
@@ -71,6 +101,7 @@ def nodes_concat_demand_coords_scaled(data: HeteroData) -> HeteroData:
     return data
 
 
+@register_builder("nodes_concat_demand_coords_direct")
 def nodes_concat_demand_coords_raw(data: HeteroData) -> HeteroData:
     """
     Concatenate demand and coords directly from _raw into nodes.x.
@@ -92,6 +123,7 @@ def nodes_concat_demand_coords_raw(data: HeteroData) -> HeteroData:
 
 
 # === Real Edges Builders ===
+@register_builder("real_edges_add_index")
 def real_edges_add_index(data: HeteroData) -> HeteroData:
     """
     Add edge index to real edges.
@@ -101,6 +133,7 @@ def real_edges_add_index(data: HeteroData) -> HeteroData:
     return data
 
 
+@register_builder("real_edges_add_capacity")
 def real_edges_add_capacity(data: HeteroData) -> HeteroData:
     """
     Add capacity to real edges.
@@ -110,6 +143,7 @@ def real_edges_add_capacity(data: HeteroData) -> HeteroData:
     return data
 
 
+@register_builder("real_edges_add_free_flow_time")
 def real_edges_add_free_flow_time(data: HeteroData) -> HeteroData:
     """
     Add free_flow_time to real edges.
@@ -119,6 +153,7 @@ def real_edges_add_free_flow_time(data: HeteroData) -> HeteroData:
     return data
 
 
+@register_builder("real_edges_add_vcr")
 def real_edges_add_vcr(data: HeteroData) -> HeteroData:
     """
     Add volume-capacity ratio to real edges.
@@ -128,6 +163,7 @@ def real_edges_add_vcr(data: HeteroData) -> HeteroData:
     return data
 
 
+@register_builder("real_edges_add_flow")
 def real_edges_add_flow(data: HeteroData) -> HeteroData:
     """
     Add flow to real edges.
@@ -137,6 +173,7 @@ def real_edges_add_flow(data: HeteroData) -> HeteroData:
     return data
 
 
+@register_builder("real_edges_stack_capacity_free_flow")
 def real_edges_stack_capacity_free_flow(data: HeteroData) -> HeteroData:
     """
     Concatenate real edge features (capacity and free flow time).
@@ -149,6 +186,7 @@ def real_edges_stack_capacity_free_flow(data: HeteroData) -> HeteroData:
 
 
 # === Virtual Edges Builders ===
+@register_builder("virtual_edges_add_index")
 def virtual_edges_add_index(data: HeteroData) -> HeteroData:
     """
     Add edge index to virtual edges (OD pairs).
@@ -183,6 +221,7 @@ def virtual_edges_add_index(data: HeteroData) -> HeteroData:
 # === Cleaning Builders (for cleanup after processing) ===
 
 
+@register_builder("clean_raw_data")
 def clean_raw_data(data: HeteroData) -> HeteroData:
     """
     Remove _raw node type after all builders have used it.
@@ -198,6 +237,7 @@ def clean_raw_data(data: HeteroData) -> HeteroData:
     return data
 
 
+@register_builder("nodes_clean_demand")
 def nodes_clean_demand(data: HeteroData) -> HeteroData:
     """
     Remove demand from nodes after it's been used.
@@ -207,6 +247,7 @@ def nodes_clean_demand(data: HeteroData) -> HeteroData:
     return data
 
 
+@register_builder("nodes_clean_coords")
 def nodes_clean_coords(data: HeteroData) -> HeteroData:
     """
     Remove coords from nodes after they've been used.
@@ -214,26 +255,6 @@ def nodes_clean_coords(data: HeteroData) -> HeteroData:
     if hasattr(data["nodes"], "coords"):
         del data["nodes"].coords
     return data
-
-
-# Registry mapping builder names to functions
-BUILDERS: dict[str, Callable[[HeteroData], HeteroData]] = {
-    "nodes_add_demand": nodes_add_demand,
-    "nodes_add_coords": nodes_add_coords,
-    "nodes_concat_demand_coords_scaled": nodes_concat_demand_coords_scaled,
-    "nodes_concat_demand_coords_direct": nodes_concat_demand_coords_raw,
-    # "virtual_edges_add_od_demand": virtual_edges_add_od_demand,
-    "real_edges_add_capacity": real_edges_add_capacity,
-    "real_edges_add_free_flow_time": real_edges_add_free_flow_time,
-    "real_edges_add_vcr": real_edges_add_vcr,
-    "real_edges_add_flow": real_edges_add_flow,
-    "real_edges_add_index": real_edges_add_index,
-    "real_edges_stack_capacity_free_flow": real_edges_stack_capacity_free_flow,
-    "virtual_edges_add_index": virtual_edges_add_index,
-    "nodes_clean_demand": nodes_clean_demand,
-    "nodes_clean_coords": nodes_clean_coords,
-    "clean_raw_data": clean_raw_data,
-}
 
 
 def get_builder(name: str) -> Callable[[HeteroData], HeteroData]:
@@ -249,10 +270,10 @@ def get_builder(name: str) -> Callable[[HeteroData], HeteroData]:
     Raises:
         KeyError: If builder name is not found.
     """
-    if name not in BUILDERS:
-        available = ", ".join(f"'{k}'" for k in BUILDERS.keys())
+    if name not in BUILDERS_REGISTRY:
+        available = ", ".join(f"'{k}'" for k in BUILDERS_REGISTRY.keys())
         raise KeyError(f"Unknown builder '{name}'. Available builders: {available}")
-    return BUILDERS[name]
+    return BUILDERS_REGISTRY[name]
 
 
 class BuilderTransform(BaseTransform):
