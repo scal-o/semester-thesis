@@ -353,7 +353,7 @@ class STADataset(Dataset):
         data = torch.load(Path(self.processed_dir) / f"{scenario}.pt", weights_only=False)
         return data
 
-    def __getitem__(self, idx) -> STADataset | HeteroData:
+    def __getitem__(self, idx) -> STADataset | HeteroData:  # type: ignore
         """
         Handles indexing and slicing of the dataset.
         If an integer is passed, it returns a single data object.
@@ -657,7 +657,7 @@ class BaseDataset(Dataset):
         data = torch.load(Path(self.processed_dir) / f"{scenario}.pt", weights_only=False)
         return data
 
-    def __getitem__(self, idx) -> HeteroData:
+    def __getitem__(self, idx) -> HeteroData:  # type: ignore
         """
         Handles indexing and slicing of the dataset.
         If an integer is passed, it returns a single data object.
@@ -668,59 +668,6 @@ class BaseDataset(Dataset):
             return self.get(self.indices()[idx])
         else:
             raise NotImplementedError("Slicing is not implemented for BaseDataset.")
-
-
-def create_splits(
-    dataset: STADataset, split: tuple[float, float, float]
-) -> tuple[
-    tuple[STADataset | HeteroData, STADataset | HeteroData, STADataset | HeteroData],
-    tuple[list, list, list],
-]:
-    """
-    Utility function to split dataset into train, val and test sets.
-
-    Args:
-        dataset: The original dataset to split.
-        split: Tuple containing the relative sizes of the train, val and test sets.
-
-    Results:
-        The three resulting STAdatasets (train, val, test), and tuples containing
-        the indices used for the split.
-    """
-
-    # normalize the sum of the splits
-    split_total = sum(split)
-    split = (
-        split[0] / split_total,
-        split[1] / split_total,
-        split[2] / split_total,
-    )
-
-    # determine sizes
-    n_total = len(dataset)
-    n_train = int(n_total * split[0])
-    n_val = int(n_total * split[1])
-
-    # generate indices
-    indices = np.random.permutation(n_total)
-    train_indices = indices[:n_train].tolist()
-    val_indices = indices[n_train : n_train + n_val].tolist()
-    test_indices = indices[n_train + n_val :].tolist()
-
-    # create subsets
-    train_dataset = dataset[train_indices]
-    val_dataset = dataset[val_indices]
-    test_dataset = dataset[test_indices]
-
-    return (
-        train_dataset,
-        val_dataset,
-        test_dataset,
-    ), (
-        train_indices,
-        val_indices,
-        test_indices,
-    )
 
 
 @click.command()
