@@ -7,12 +7,14 @@ import torch_geometric as pg
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 
-from ml_static.config import Config
-from ml_static.data import STADataset, create_splits
-from ml_static.model import GNN
+from ml_static.config import Config, load_config
+from ml_static.data import DatasetSplit
+from ml_static.factories import create_optimizer, create_scheduler
+from ml_static.losses import LossWrapper
+from ml_static.models import model_factory
 from ml_static.tracker import MLflowtracker
 from ml_static.training import run_epoch, run_test
-from ml_static.losses import LossWrapper
+from ml_static.utils import get_project_root
 
 
 def run_training(config: Config, check_run: bool = False) -> tuple:
@@ -25,28 +27,29 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
             one data sample, to check if the model converges or not)
 
     Returns:
-        Tuple of (model, dataset, train_loader, val_loader, test_loader, device, target_getter, tracker, tt_train, tt_val, tt_test)
+        Tuple of (model, dataset_split)
     """
 
     # set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # set seed
-    pg.seed_everything(config.seed)
+    seed = config.training.seed if config.training.seed is not None else 42
+    pg.seed_everything(seed)
 
-    # load dataset (and implicitly apply transforms) from config
-    dataset = STADataset.from_config(config)
-
-    # train/val/test split
-    (
-        (train_split, val_split, test_split),
-        (tt_train, tt_val, tt_test),
-    ) = create_splits(dataset, (0.7, 0.15, 0.15))
+    # create dataset splits with transforms from config
+    dataset_split = DatasetSplit.from_config(config)
 
     # create dataloaders
-    train_loader = DataLoader(train_split, batch_size=config.batch_size, shuffle=False)
-    val_loader = DataLoader(val_split, batch_size=len(val_split), shuffle=False)
-    test_loader = DataLoader(test_split, batch_size=len(test_split), shuffle=False)
+    train_loader = DataLoader(
+        dataset_split["train"], batch_size=config.training.batch_size, shuffle=False
+    )
+    val_loader = DataLoader(
+        dataset_split["val"], batch_size=len(dataset_split["val"]), shuffle=False
+    )
+    test_loader = DataLoader(
+        dataset_split["test"], batch_size=len(dataset_split["test"]), shuffle=False
+    )
 
     data_sample = next(iter(train_loader))
 
@@ -61,27 +64,28 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
         run_description = "Training"
 
     # define model
-    model = GNN.from_config(config).to(device)
+    model = model_factory(config).to(device)
 
     # define loss and optimizer
-    # loss = config.get_loss_function()
     loss = LossWrapper.from_config(config)
-    optimizer = config.get_optimizer(model.parameters())
-    scheduler = config.get_scheduler(optimizer)
+    optimizer = create_optimizer(config.optimizer, model.parameters())
+    scheduler = create_scheduler(config.scheduler, optimizer)
 
     # define training epochs
-    epochs = config.epochs
+    epochs = config.training.epochs
 
     # set up mlflow tracker
     tracker = MLflowtracker()
 
     # start mlflow run
     with mlflow.start_run():
+        tracker.log_configs()
         tracker.log_params(config.raw_config)
-        tracker.log_seed(config.seed)
+        tracker.log_params(config.raw_model)
+        tracker.log_seed(seed)
 
-        # log split indices via tracker
-        tracker.log_split_indices(tt_train, tt_val, tt_test)
+        # log dataset split information
+        tracker.log_dataset_info(dataset_split)
 
         for epoch in tqdm(range(1, epochs + 1), desc=run_description):
             # train/val phase
@@ -114,26 +118,20 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
         print(f"Test Loss: {test_loss:.4f}")
 
         tracker.log_training_curves()
-        tracker.log_model(model, config.model_name, data_sample)
+        tracker.log_model(model, config.model.type, dataset_split["train"][0])
 
         print("--- Computing Performance Statistics ---")
         # log performance reports for all dataset splits
         datasets = {
-            "train": train_split,
-            "validation": val_split,
-            "test": test_split,
+            "train": dataset_split["train"],
+            "validation": dataset_split["val"],
+            "test": dataset_split["test"],
         }
         stats = tracker.log_all_performance_reports(model, datasets)
         # print stats table
         print(stats)
 
-        return (
-            model,
-            dataset,
-            tt_train,
-            tt_val,
-            tt_test,
-        )
+        return model, dataset_split
 
 
 @click.command("train")
@@ -157,13 +155,13 @@ def train_model(
     Train a GNN model on static traffic assignment data.
 
     Returns:
-        Tuple of (model, dataset, tt_train, tt_val, tt_test)
+        Tuple of (model, dataset_split)
     """
     print("--- Training GNN Model ---")
 
     # set up configuration path
     if config_path is None:
-        config_path = Path(__file__).parent / "conf_run.yaml"
+        config_path = get_project_root() / "configs" / "conf_run.yaml"
     else:
         config_path = Path(config_path)
 
@@ -172,24 +170,18 @@ def train_model(
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
 
     # load config
-    config = Config(config_path)
+    config = load_config(config_path)
     print(f"Configuration loaded from {config_path}")
 
-    print(f"Dataset: {config.dataset_path}")
+    print(f"Dataset: {config.dataset.full_path}")
     print(f"Check run: {check_run}")
 
     # run training
     try:
-        (
-            model,
-            dataset,
-            tt_train,
-            tt_val,
-            tt_test,
-        ) = run_training(config, check_run=check_run)
+        model, dataset_split = run_training(config, check_run=check_run)
         print("--- Training Complete ---")
 
-        return model, dataset, tt_train, tt_val, tt_test
+        return model, dataset_split
     except Exception as e:
         raise Exception(f"Training failed. An unexpected error occurred: {e}") from e
 
@@ -198,14 +190,9 @@ def train_model(
 if __name__ == "__main__":
     # When running interactively, we call the underlying function directly
     # to avoid click's command-line handling, which can exit the script.
-    model, dataset, tt_train, tt_val, tt_test = train_model.callback(
-        config_path=None, check_run=True
-    )
+    model, dataset_split = train_model.callback(config_path=None, check_run=True)
 
     results = {
         "model": model,
-        "dataset": dataset,
-        "tt_train": tt_train,
-        "tt_val": tt_val,
-        "tt_test": tt_test,
+        "dataset_split": dataset_split,
     }
