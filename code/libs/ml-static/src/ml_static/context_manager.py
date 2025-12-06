@@ -3,15 +3,19 @@ from __future__ import annotations
 import importlib.util
 import shutil
 import sys
-import tempfile
+import threading
 from pathlib import Path
 from typing import Any, Self
 
 import mlflow
-import numpy as np
 import torch
 import yaml
 from mlflow.entities import ViewType
+
+from ml_static.utils import get_project_root
+
+# lock to prevent concurrent sys.path/sys.modules manipulation
+_import_lock = threading.RLock()
 
 
 def get_tracking_config() -> dict[str, str]:
@@ -21,7 +25,7 @@ def get_tracking_config() -> dict[str, str]:
     Returns:
         Dictionary with 'tracking_uri' and 'experiment' keys.
     """
-    config_path = Path(__file__).parent / "conf_mlflow.yaml"
+    config_path = get_project_root() / "configs" / "conf_mlflow.yaml"
     if not config_path.exists():
         raise FileNotFoundError(f"MLflow configuration file not found: {config_path}")
 
@@ -129,7 +133,7 @@ class RunContext:
         self.model_dir: Path = self.download_path / experiment.name / self.run_id
         self.module_prefix: str = f"mlstatic_{self.run_id}"
 
-        self.model_module: Any = None
+        self.models_module: Any = None
         self.data_module: Any = None
         self.config_module: Any = None
 
@@ -138,45 +142,78 @@ class RunContext:
         self._dataset: Any = None
         self._data_split: Any = None
 
-        # required files lists
-        self.config_files = ["conf_run.yaml"]
-        self.module_files = ["model.py", "data.py", "config.py", "model.pt"]
-        self.index_files = ["train_indices.txt", "test_indices.txt", "val_indices.txt"]
-
     def __enter__(self) -> Self:
-        """Download artifacts and load all modules."""
-        # download artifacts
+        """Download artifacts and surgically load modules."""
         self._download_artifacts()
 
-        # validate required files
-        self._validate_required_files(self.config_files, self.module_files, self.index_files)
+        # The core logic is now much safer and cleaner
+        with _import_lock:
+            print("starting module load")
+            # 1. Save a reference to any currently installed ml_static modules
+            self._saved_modules = {}
+            for name in list(sys.modules.keys()):
+                if name == "ml_static" or name.startswith("ml_static."):
+                    self._saved_modules[name] = sys.modules.pop(name)
 
-        # load all modules
-        print("--- Loading modules...")
-        code_path = self.model_dir / "code"
+            try:
+                # 2. Define the path to the downloaded package
+                code_path = self.model_dir / "code"
+                package_init_path = code_path / "__init__.py"
 
-        try:
-            self.model_module = self._import_module_from_path(
-                f"{self.module_prefix}.model", code_path / "model.py"
-            )
-            self.data_module = self._import_module_from_path(
-                f"{self.module_prefix}.data", code_path / "data.py"
-            )
-            self.config_module = self._import_module_from_path(
-                f"{self.module_prefix}.config", code_path / "config.py"
-            )
-        except Exception:
-            # clean up any partially loaded modules on failure
-            self._cleanup_modules()
-            raise
+                if not package_init_path.is_file():
+                    raise FileNotFoundError(
+                        f"The package init file '__init__.py' was not found in {code_path}"
+                    )
 
+                # 3. Create a module spec for the downloaded package.
+                # This tells the import system that the 'code' directory is the 'ml_static' package.
+                spec = importlib.util.spec_from_file_location("ml_static", package_init_path)
+
+                if spec is None or spec.loader is None:
+                    raise ImportError(f"Could not create a module spec for {package_init_path}")
+
+                # 4. Create the module and add it to sys.modules.
+                ml_static_module = importlib.util.module_from_spec(spec)
+                sys.modules["ml_static"] = ml_static_module
+
+                # Execute the module code (the __init__.py)
+                spec.loader.exec_module(ml_static_module)
+
+                # 5. Now, absolute imports work correctly.
+                import ml_static.config as config
+                import ml_static.data as data
+                import ml_static.models as models
+
+                self.config_module = config
+                self.data_module = data
+                self.models_module = models
+
+            except Exception:
+                # If anything goes wrong, clean up immediately and restore state
+                self.__exit__(*sys.exc_info())
+                raise
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Clean up: remove loaded modules from sys.modules."""
-        if self.module_prefix is not None:
-            self._cleanup_modules()
-            self._cleanup_data()
+        """Clean up modules and restore the original environment."""
+        with _import_lock:
+            # 1. Remove all modules that were loaded from the downloaded code
+            loaded_code_dir = str(self.model_dir / "code")
+            for name, module in list(sys.modules.items()):
+                # A module is one of ours if it has a __file__ pointing to our code dir
+                if (
+                    hasattr(module, "__file__")
+                    and module.__file__
+                    and str(module.__file__).startswith(loaded_code_dir)
+                ):
+                    del sys.modules[name]
+
+            # 2. Restore the original modules that were saved in __enter__
+            if hasattr(self, "_saved_modules"):
+                sys.modules.update(self._saved_modules)
+                del self._saved_modules  # Clean up the saved dict to avoid holding refs
+
+        self._cleanup_data()
 
         if exc_type is not None:
             print(f"Error occurred: {exc_type.__name__}: {exc_val}")
@@ -184,9 +221,6 @@ class RunContext:
     def _download_artifacts(self) -> None:
         """
         Download all necessary artifacts from the run.
-
-        Returns:
-            Path to the downloaded model directory.
         """
         # check if already downloaded
         if self.model_dir.exists():
@@ -196,136 +230,17 @@ class RunContext:
                 print(f"Model already downloaded at: {self.model_dir}")
                 return
 
-        # create directory
-        self.model_dir.mkdir(parents=True)
+        # create directory (mlflow will create the final dir, but we need parents)
+        self.model_dir.parent.mkdir(parents=True, exist_ok=True)
 
         print(f"Downloading artifacts for run {self.run_id}...")
 
-        # download all artifacts
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # download artifacts to temp directory
-            artifact_path = mlflow.artifacts.download_artifacts(  # type: ignore
-                run_id=self.run_id, artifact_path="", dst_path=tmpdir
-            )
-
-            # copy to final destination
-            artifact_path = Path(artifact_path)
-
-            # copy code directory
-            if (artifact_path / "code").exists():
-                shutil.copytree(artifact_path / "code", self.model_dir / "code")
-            else:
-                raise FileNotFoundError(f"No 'code' artifacts found for run {self.run_id}")
-
-            # copy split_indices if exists
-            if (artifact_path / "split_indices").exists():
-                shutil.copytree(artifact_path / "split_indices", self.model_dir / "split_indices")
-            else:
-                raise FileNotFoundError(f"No 'split_indices' artifacts found for run {self.run_id}")
+        # download all artifacts directly to the destination directory
+        mlflow.artifacts.download_artifacts(  # type: ignore
+            run_id=self.run_id, artifact_path="", dst_path=str(self.model_dir)
+        )
 
         print(f"Model downloaded successfully to: {self.model_dir}")
-
-    def _load_split_indices(self) -> dict[str, list]:
-        """
-        Load data split indices from the split_indices directory.
-
-        Returns:
-            Dictionary with split names as keys and list of indices as values.
-        """
-        split_path = self.model_dir / "split_indices"
-
-        split_indices = {}
-        for split_name in ["train", "test", "val"]:
-            split_file = split_path / f"{split_name}_indices.txt"
-            split_indices[split_name] = np.loadtxt(split_file, dtype=int).tolist()
-
-        return split_indices
-
-    def _validate_required_files(
-        self, config_files: list[str], module_files: list[str], index_files: list[str]
-    ) -> None:
-        """
-        Validate that required files exist in the code directory.
-
-        Args:
-            config_files: List of configuration filenames to check.
-            module_files: List of module filenames to check.
-            index_files: List of index filenames to check.
-
-        Raises:
-            FileNotFoundError: If any required file is missing.
-        """
-        code_path = self.model_dir / "code"
-        if not code_path.exists():
-            raise FileNotFoundError(f"Code directory not found at {code_path}")
-
-        missing = [f for f in config_files if not (code_path / f).exists()]
-        if missing:
-            missing = ", ".join(missing)
-            raise FileNotFoundError(f"Missing required config files in {code_path}: {missing}")
-
-        missing = [f for f in module_files if not (code_path / f).exists()]
-        if missing:
-            missing = ", ".join(missing)
-            raise FileNotFoundError(f"Missing required code files in {code_path}: {missing}")
-
-        index_path = self.model_dir / "split_indices"
-        if not index_path.exists():
-            raise FileNotFoundError(f"Indices directory not found at {index_path}")
-
-        missing = [f for f in index_files if not (index_path / f).exists()]
-        if missing:
-            missing = ", ".join(missing)
-            raise FileNotFoundError(f"Missing required index files in {index_path}: {missing}")
-
-    def _import_module_from_path(self, module_name: str, file_path: Path) -> Any:
-        """
-        Dynamically import a Python module from a file path.
-
-        Args:
-            module_name: Name to assign to the module.
-            file_path: Path to the Python file.
-
-        Returns:
-            The imported module.
-
-        Raises:
-            ImportError: If module cannot be loaded.
-        """
-        if not file_path.exists():
-            raise FileNotFoundError(f"Module file not found: {file_path}")
-
-        spec = importlib.util.spec_from_file_location(module_name, file_path)
-        if spec is None or spec.loader is None:
-            raise ImportError(f"Cannot create module spec from {file_path}")
-
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = module
-
-        try:
-            spec.loader.exec_module(module)
-        except Exception as e:
-            # clean up on failure
-            del sys.modules[module_name]
-            raise ImportError(
-                f"Failed to execute module {module_name} from {file_path}: {e}"
-            ) from e
-
-        return module
-
-    def _cleanup_modules(self) -> None:
-        """
-        Remove all loaded modules from sys.modules.
-        """
-        if self.module_prefix is None:
-            return
-        modules_to_remove = [name for name in sys.modules if name.startswith(self.module_prefix)]
-        for module_name in modules_to_remove:
-            del sys.modules[module_name]
-
-        self.model_module = None
-        self.data_module = None
-        self.config_module = None
 
     def _cleanup_data(self) -> None:
         """
@@ -346,10 +261,10 @@ class RunContext:
         """
 
         if not self._config:
-            code_path = self.model_dir / "code"
+            config_path = self.model_dir / "configs" / "conf_run.yaml"
             print("--- Loading configuration")
 
-            self._config = self.config_module.Config(code_path / self.config_files[0])
+            self._config = self.config_module.load_config(config_path)
 
         return self._config
 
@@ -363,17 +278,26 @@ class RunContext:
         """
 
         if not self._model:
-            code_path = self.model_dir / "code"
             print("--- Loading model")
 
-            # verify GNN class exists
-            if not hasattr(self.model_module, "GNN"):
-                raise AttributeError(
-                    f"Module {self.model_module.__file__} does not define 'GNN' class"
-                )
+            # load checkpoint to get model type and state
+            checkpoint_path = self.model_dir / "model" / "model.pt"
+            if not checkpoint_path.exists():
+                raise FileNotFoundError(f"Model checkpoint not found at {checkpoint_path}")
 
-            # load model using the classmethod
-            self._model = self.model_module.GNN.from_checkpoint(self.config, code_path / "model.pt")
+            checkpoint = torch.load(checkpoint_path, weights_only=False)
+            model_type = checkpoint.get("model_type")
+
+            if not model_type:
+                raise ValueError("Checkpoint does not contain 'model_type' field")
+
+            # verify factory exists
+            if not hasattr(self.models_module, "model_factory"):
+                raise AttributeError("Models module does not define 'model_factory'")
+
+            # create model from config and load checkpoint
+            self._model = self.models_module.model_factory(self.config)
+            self._model.load_state_dict(checkpoint["state_dict"])
 
         return self._model
 
@@ -398,16 +322,22 @@ class RunContext:
         return self._dataset
 
     @property
-    def data_split(self) -> dict[str, list]:
+    def data_split(self) -> Any:
         """
-        Load the data split indices used during the run.
+        Create DatasetSplit using the seed from the run configuration.
+        Splits are deterministically regenerated from the seed.
 
         Returns:
-            Dictionary with split names as keys and list of indices as values.
+            DatasetSplit instance with train/val/test splits.
         """
 
         if not self._data_split:
-            print("--- Loading data split indices")
-            self._data_split = self._load_split_indices()
+            print("--- Creating data split from config")
+
+            # verify DatasetSplit exists
+            if not hasattr(self.data_module, "DatasetSplit"):
+                raise AttributeError("Data module does not define 'DatasetSplit' class")
+
+            self._data_split = self.data_module.DatasetSplit.from_config(self.config)
 
         return self._data_split
