@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -17,6 +16,7 @@ from tabulate import tabulate
 from tqdm import tqdm
 
 from ml_static import reporting as rep
+from ml_static.utils import get_project_root
 
 if TYPE_CHECKING:
     from torch_geometric.data import Dataset
@@ -43,7 +43,7 @@ class MLflowtracker:
         # retrieve configs
         # run_conf contains mlflow configs (tracking uri and experiment name)
         # run_params contains model parameters (name, epochs, loss, optimizer)
-        with open(Path(__file__).parent / "conf_mlflow.yaml") as f:
+        with open(get_project_root() / "configs" / "conf_mlflow.yaml") as f:
             config = yaml.safe_load(f)
 
         # set uri and experiment
@@ -99,6 +99,19 @@ class MLflowtracker:
             metrics["learning_rate"] = learning_rate
 
         mlflow.log_metrics(metrics, step=epoch)
+
+    def log_configs(self) -> None:
+        """
+        Log all configuration files found in the project's 'configs' directory
+        to a 'configs' artifact directory in MLflow.
+        """
+        configs_dir = get_project_root() / "configs"
+        if not configs_dir.is_dir():
+            print(f"Warning: Configuration directory not found at {configs_dir}")
+            return
+
+        # log all config files
+        mlflow.log_artifacts(str(configs_dir.absolute()), artifact_path="configs")
 
     def log_test_loss(self, test_loss: float) -> None:
         """Log test loss metric.
@@ -158,11 +171,11 @@ class MLflowtracker:
         model.cpu()
         data.to("cpu")
 
+        # log source code and model artifacts
+        mlflow.log_artifacts(str(code_dir.absolute()), artifact_path="code")
+
         with tempfile.TemporaryDirectory() as dirname:
             tempdir = Path(dirname)
-
-            # save source code
-            shutil.copytree(code_dir, tempdir, dirs_exist_ok=True)
 
             # save model checkpoint
             checkpoint = model.extract_checkpoint()
@@ -173,9 +186,8 @@ class MLflowtracker:
                 model_summary = torch_geometric.nn.summary(model, data)
                 f.write(model_summary)
 
-            # log artifacts
-            tempdir = str(tempdir.absolute())
-            mlflow.log_artifacts(tempdir, artifact_path="code")
+            # log model-related artifacts
+            mlflow.log_artifacts(str(tempdir.absolute()), artifact_path="model")
 
     def log_all_performance_reports(
         self,
