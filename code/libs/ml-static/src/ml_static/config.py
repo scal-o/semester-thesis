@@ -324,17 +324,17 @@ class ConfigLoader:
         with open(config_path) as f:
             raw_config = yaml.safe_load(f)
 
-        # parse model type (single source of truth for model identification)
-        model_type = raw_config.get("model", {}).get("type", "HetGAT")
+        # parse model name (single source of truth for model identification)
+        model_name = raw_config.get("model", {}).get("name", "HetGAT")
 
         # resolve and load model config path
         if model_config_path is None:
-            model_config_path = config_path.parent / f"conf_model_{model_type}.yaml"
+            model_config_path = config_path.parent / f"conf_model_{model_name}.yaml"
 
         if not model_config_path.exists():
             raise FileNotFoundError(
                 f"Model config file not found: {model_config_path}. "
-                f"Expected config for model type '{model_type}'."
+                f"Expected config for model '{model_name}'."
             )
 
         with open(model_config_path) as f:
@@ -346,7 +346,9 @@ class ConfigLoader:
         scheduler = cls._parse_scheduler_config(raw_config.get("scheduler", {}))
         loss = cls._parse_loss_config(raw_config.get("loss", {}))
         dataset = cls._parse_dataset_config(raw_config.get("dataset", {}))
-        model = cls._parse_model_config(model_type, model_raw_config.get("architecture", {}))
+        model = cls._parse_model_config(
+            model_raw_config.get("type", ""), model_raw_config.get("architecture", {})
+        )
 
         # parse transforms
         model_pre, model_post = cls._parse_transforms_config(model_raw_config.get("transforms", {}))
@@ -426,8 +428,8 @@ class ConfigLoader:
         Returns:
             Tuple of (pre_transforms, post_transforms).
         """
-        pre = cls._parse_transform_list(transforms_data.get("pre", []))
-        post = cls._parse_transform_list(transforms_data.get("post", []))
+        pre = cls._parse_transform_list(transforms_data.get("pre") or [])
+        post = cls._parse_transform_list(transforms_data.get("post") or [])
         return pre, post
 
     @classmethod
