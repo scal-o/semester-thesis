@@ -1,4 +1,5 @@
 # Configuration for HetGAT model type
+type: "HetGAT_no_preproc"
 
 architecture:
   # List of encoders for different edge types

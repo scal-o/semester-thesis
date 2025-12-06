@@ -1,17 +1,17 @@
 model:
-    type: "HetGAT"
+    name: "HetGAT_no_preproc_sioux_falls"
 
 training:
     epochs: 10
     batch_size: 32
     target:
         pre:
-        - builder: "target_flow"
+        - builder: "target_vcr"
         post:
-        - scaler:
-            target: "y"
-            transform: "minmax"
-            factor: 100
+        # - scaler:
+        #     target: "y"
+        #     transform: "minmax"
+        #     factor: 100
 
 
 optimizer:

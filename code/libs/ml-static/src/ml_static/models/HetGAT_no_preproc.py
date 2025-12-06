@@ -22,9 +22,9 @@ if TYPE_CHECKING:
 # =============================================================================
 
 
-@ConfigLoader.register_config_class("HetGAT")
+@ConfigLoader.register_config_class("HetGAT_no_preproc")
 @dataclass(frozen=True)
-class HetGATArchitectureConfig:
+class HetGAT_no_preproc_ArchitectureConfig:
     """HetGAT-specific architecture configuration.
 
     Attributes:
@@ -100,8 +100,8 @@ class HetGATArchitectureConfig:
 # =============================================================================
 
 
-@register_model("HetGAT")
-class HetGAT(nn.Module):
+@register_model("HetGAT_no_preproc")
+class HetGAT_no_preproc(nn.Module):
     """
     Heterogeneous Graph Attention Network (HetGAT) model.
     Structure from Liu & Meidani, 2024 (adapted).
@@ -134,7 +134,7 @@ class HetGAT(nn.Module):
         """
         arch = config.model.architecture
 
-        if not isinstance(arch, HetGATArchitectureConfig):
+        if not isinstance(arch, HetGAT_no_preproc_ArchitectureConfig):
             raise ValueError(
                 f"Expected HetGATArchitectureConfig, got {type(arch).__name__}. "
                 "Ensure model config file exists and is loaded correctly."
