@@ -33,7 +33,7 @@ def compute_predictions(
         A pandas DataFrame with detailed prediction results in original scale.
     """
     # create dataloader for efficient batch processing
-    dataloader = DataLoader(dataset, batch_size=len(dataset), shuffle=False)
+    dataloader = DataLoader(dataset, batch_size=32, shuffle=False)
 
     all_predictions = []
     all_true_values = []
