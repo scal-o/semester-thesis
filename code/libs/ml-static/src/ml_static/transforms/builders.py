@@ -185,6 +185,25 @@ def real_edges_stack_capacity_free_flow(data: HeteroData) -> HeteroData:
     return data
 
 
+# === Target builders ===
+@register_builder("target_flow")
+def target_flow(data: HeteroData) -> HeteroData:
+    """
+    Add flow target as y.
+    """
+    data.y = data["_raw"].edge_flow
+    return data
+
+
+@register_builder("target_vcr")
+def target_vcr(data: HeteroData) -> HeteroData:
+    """
+    Add volume-capacity ratio target as y.
+    """
+    data.y = data["_raw"].edge_vcr
+    return data
+
+
 # === Virtual Edges Builders ===
 @register_builder("virtual_edges_add_index")
 def virtual_edges_add_index(data: HeteroData) -> HeteroData:

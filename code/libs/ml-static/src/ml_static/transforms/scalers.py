@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Self
 
 import numpy as np
 import torch
@@ -10,7 +10,7 @@ from torch_geometric.transforms import BaseTransform
 if TYPE_CHECKING:
     from torch_geometric.data import HeteroData
 
-    from ml_static.config import ScalerTransformConfig, TargetTransformConfig
+    from ml_static.config import ScalerTransformConfig
     from ml_static.data import STADataset
 
 
@@ -229,97 +229,61 @@ class BaseScaler(ABC):
         return x / factor * (self.params["max"] - self.params["min"]) + self.params["min"]
 
 
-class TargetScaler(BaseScaler, BaseTransform):
+class ScalerTransform(BaseScaler, BaseTransform):
     """
-    Scaler for target values in heterogeneous graphs.
-    Selects target from graph, scales it, and stores in data.y
+    Unified scaler for both target values and features in heterogeneous graphs.
+
+    Handles:
+    - Target values (y): specify target="y"
+    - Node features: specify target=(node_type, feature_name)
+    - Edge features: specify target=((src, edge_type, dst), feature_name)
+
+    Note: Target format is validated by ScalerTransformConfig before instantiation.
     """
 
-    def __init__(self, target: tuple, transform_type: str | None = None, **kwargs):
+    def __init__(self, target: str | tuple = "y", transform_type: str | None = None, **kwargs):
         """
         Args:
-            target: Tuple (type, label) specifying target location.
+            target: Specifies what to scale:
+                - "y": Target labels (data.y)
+                - (type_spec, feature): Node/edge feature where type_spec is str or tuple
             transform_type: Type of scaling ('log', 'norm', 'minmax', None).
             **kwargs: Additional parameters (e.g., factor=100).
         """
         BaseScaler.__init__(self, transform_type, **kwargs)
-        self.target_type, self.target_label = target
+        self.target = target
+        self.is_label = target == "y"
 
     @classmethod
-    def from_config(cls, config: TargetTransformConfig) -> TargetScaler:
+    def from_config(cls, config: ScalerTransformConfig) -> Self:
         """
-        Create scaler from target transform configuration.
-
-        Args:
-            config: Target transform configuration.
-
-        Returns:
-            TargetScaler instance.
-        """
-        return cls(
-            target=config.target,
-            transform_type=config.transform,
-            **config.kwargs,
-        )
-
-    def _get_value(self, data: HeteroData) -> torch.Tensor:
-        """Extract target from graph."""
-        if not (self.target_type in data.node_types or self.target_type in data.edge_types):
-            raise KeyError(f"Data type '{self.target_type}' not found.")
-
-        value = data[self.target_type].get(self.target_label, None)
-        if value is None:
-            raise KeyError(f"Target '{self.target_label}' not found in '{self.target_type}'.")
-        return value
-
-    def _set_value(self, data: HeteroData, value: torch.Tensor) -> None:
-        """Store scaled target in data.y"""
-        data.y = value
-
-
-class FeatureScaler(BaseScaler, BaseTransform):
-    """
-    Scaler for feature values in heterogeneous graphs.
-    Scales a specific feature in-place.
-    """
-
-    def __init__(self, feature: tuple, transform_type: str | None = None, **kwargs):
-        """
-        Args:
-            feature: Tuple (type, label) specifying feature location.
-            transform_type: Type of scaling ('log', 'norm', 'minmax', None).
-            **kwargs: Additional parameters (e.g., factor=100).
-        """
-        BaseScaler.__init__(self, transform_type, **kwargs)
-        self.feature_type, self.feature_label = feature
-
-    @classmethod
-    def from_config(cls, config: ScalerTransformConfig) -> FeatureScaler:
-        """
-        Create scaler from feature transform configuration.
+        Create scaler from transform configuration.
 
         Args:
             config: Scaler transform configuration.
 
         Returns:
-            FeatureScaler instance.
+            Scaler instance.
         """
         return cls(
-            feature=(config.type_spec, config.feature),
+            target=config.scaler_target,
             transform_type=config.transform,
             **config.kwargs,
         )
 
     def _get_value(self, data: HeteroData) -> torch.Tensor:
-        """Extract feature from graph."""
-        if not (self.feature_type in data.node_types or self.feature_type in data.edge_types):
-            raise KeyError(f"Data type '{self.feature_type}' not found.")
+        """Extract value from graph based on target specification."""
+        if self.is_label:
+            return data.y
 
-        value = data[self.feature_type].get(self.feature_label, None)
-        if value is None:
-            raise KeyError(f"Feature '{self.feature_label}' not found in '{self.feature_type}'.")
-        return value
+        # feature access: target is (type_spec, feature_name)
+        type_spec, feature_name = self.target
+        return data[type_spec][feature_name]
 
     def _set_value(self, data: HeteroData, value: torch.Tensor) -> None:
-        """Store scaled feature back in original location."""
-        data[self.feature_type][self.feature_label] = value
+        """Store scaled value back based on target specification."""
+        if self.is_label:
+            data.y = value
+        else:
+            type_spec, feature_name = self.target
+            data[type_spec][feature_name] = value

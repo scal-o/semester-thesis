@@ -5,9 +5,14 @@ training:
     epochs: 10
     batch_size: 32
     target:
-        type: ["nodes", "real", "nodes"]
-        label: "edge_flow"
-        transform: "minmax"
+        pre:
+        - builder: "target_flow"
+        post:
+        - scaler:
+            target: "y"
+            transform: "minmax"
+            factor: 100
+
 
 optimizer:
     type: "adam"

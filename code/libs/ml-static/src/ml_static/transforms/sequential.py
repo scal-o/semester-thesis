@@ -10,7 +10,7 @@ from torch_geometric.transforms import BaseTransform
 
 from ml_static.config import BuilderTransformConfig, ScalerTransformConfig
 from ml_static.transforms.builders import BuilderTransform
-from ml_static.transforms.scalers import FeatureScaler
+from ml_static.transforms.scalers import ScalerTransform
 
 if TYPE_CHECKING:
     from torch_geometric.data import HeteroData
@@ -37,7 +37,7 @@ class SequentialTransform(BaseTransform):
         self.transforms = transforms
 
     @classmethod
-    def from_config(cls, config: Config, stage: str) -> Self:
+    def from_config(cls, config: Config, stage: str | None = None) -> Self:
         """
         Create SequentialTransform from configuration.
 
@@ -48,6 +48,8 @@ class SequentialTransform(BaseTransform):
         Returns:
             SequentialTransform instance.
         """
+        if stage is None:
+            raise ValueError("stage parameter is required for SequentialTransform")
 
         transforms = []
 
@@ -64,7 +66,7 @@ class SequentialTransform(BaseTransform):
             if isinstance(transform_cfg, BuilderTransformConfig):
                 transforms.append(BuilderTransform.from_config(transform_cfg))
             elif isinstance(transform_cfg, ScalerTransformConfig):
-                transforms.append(FeatureScaler.from_config(transform_cfg))
+                transforms.append(ScalerTransform.from_config(transform_cfg))
             else:
                 raise ValueError(f"Unknown transform config type: {type(transform_cfg)}")
 

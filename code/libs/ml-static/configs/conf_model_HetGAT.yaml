@@ -53,6 +53,6 @@ transforms:
             transform: "minmax"
             factor: 100
         - builder: "nodes_concat_demand_coords_scaled"
-        # - builder: "nodes_clean_coords"
-        # - builder: "nodes_clean_demand"
-        # - builder: "clean_raw_data"
+        - builder: "nodes_clean_coords"
+        - builder: "nodes_clean_demand"
+        - builder: "clean_raw_data"

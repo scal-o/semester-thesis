@@ -1,3 +1,3 @@
 from .builders import BuilderTransform
-from .scalers import FeatureScaler, TargetScaler
+from .scalers import ScalerTransform
 from .sequential import SequentialTransform

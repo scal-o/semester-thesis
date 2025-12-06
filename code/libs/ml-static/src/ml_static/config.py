@@ -111,17 +111,6 @@ class TrainingConfig:
     seed: int | None = None  # None means random seed
 
 
-@dataclass(frozen=True)
-class ModelConfig:
-    """Configuration for model architecture."""
-
-    name: str = "GNN"
-    type: str = "HetGAT"  # Model type for factory lookup
-    input_channels: int | None = None  # None means infer from data
-    hidden_channels: int = 32
-    output_channels: int = 16
-
-
 @dataclass
 class ModelConfigWithArchitecture:
     """Model configuration with typed architecture."""
@@ -133,47 +122,100 @@ class ModelConfigWithArchitecture:
 
 
 @dataclass(frozen=True)
-class TargetTransformConfig:
-    """Configuration for target (label) transform."""
-
-    edge_type: tuple[str, ...] = ("nodes", "real", "nodes")
-    label: str = "edge_vcr"
-    transform: str | None = None
-    kwargs: dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def target(self) -> tuple[tuple[str, ...], str]:
-        """Get target as (edge_type, label) tuple."""
-        return (self.edge_type, self.label)
-
-
-@dataclass(frozen=True)
 class BuilderTransformConfig:
-    """Configuration for builder transform in post-pipeline."""
+    """Configuration for builder transform in pipeline."""
 
     builder: str
 
 
 @dataclass(frozen=True)
 class ScalerTransformConfig:
-    """Configuration for scaler transform in post-pipeline."""
+    """
+    Unified configuration for scaler transforms.
 
-    type_spec: tuple[str, ...]  # Can be node_type or edge_type
-    feature: str
-    transform: str  # Required, no default
+    Handles both target scalers and feature scalers:
+    - Target scalers: specify target="y"
+    - Feature scalers: specify type="nodes" (or edge type) and feature="demand"
+    """
+
+    transform: str  # Required: 'log', 'norm', 'minmax'
+
+    # For target scalers (labels): specify target="y"
+    target: str | None = None
+
+    # For feature scalers: specify type and feature
+    type: str | list[str] | None = None  # node type or edge type (list for edges)
+    feature: str | None = None
+
     kwargs: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        """Validate that only one of the two configurations is specified."""
+        # check that exactly one configuration is used
+        has_target = self.target is not None
+        has_type_feature = self.type is not None and self.feature is not None
+
+        if has_target and has_type_feature:
+            raise ValueError(
+                "Cannot specify both 'target' and 'type'+'feature'. "
+                "Use 'target' for labels or 'type'+'feature' for node/edge features."
+            )
+
+        if not has_target and not has_type_feature:
+            raise ValueError(
+                "Must specify either 'target' (for labels) or both 'type' and 'feature' (for node/edge features)."
+            )
+
+        # validate target format (if specified)
+        if has_target:
+            if not isinstance(self.target, str):
+                raise TypeError(f"Target must be str. Got {type(self.target).__name__}")
+            if self.target != "y":
+                raise ValueError(f"Target must be 'y' for labels. Got: '{self.target}'")
+
+        # validate type + feature format (if specified)
+        if has_type_feature:
+            if self.type is None or self.feature is None:
+                raise ValueError("Both 'type' and 'feature' must be specified together.")
+
+            if not isinstance(self.feature, str):
+                raise TypeError(f"Feature must be str. Got {type(self.feature).__name__}")
+
     @property
-    def target(self) -> tuple[tuple[str, ...], str]:
-        """Get target as (type_spec, feature) tuple."""
-        return (self.type_spec, self.feature)
+    def scaler_target(self) -> str | tuple:
+        """Get target in format expected by Scaler class.
+
+        Normalizes type specifications for PyTorch Geometric compatibility:
+        - Single-element lists/tuples become strings (node types)
+        - Multi-element lists become tuples (edge types)
+        - Strings remain as-is
+        """
+        # return target directly if specified
+        if self.target is not None:
+            return self.target
+
+        # convert type + feature to (type_spec, feature) tuple
+        assert self.type is not None and self.feature is not None
+
+        # Normalize type_spec for PyG HeteroData indexing
+        if isinstance(self.type, list):
+            # Single-element list -> string (node type)
+            if len(self.type) == 1:
+                type_spec = self.type[0]
+            # Multi-element list -> tuple (edge type)
+            else:
+                type_spec = tuple(self.type)
+        else:
+            # Already a string
+            type_spec = self.type
+
+        return (type_spec, self.feature)
 
 
 @dataclass(frozen=True)
 class TransformsConfig:
-    """Configuration for all transforms (target, pre, and post)."""
+    """Configuration for all transforms (pre and post)."""
 
-    target: TargetTransformConfig = field(default_factory=TargetTransformConfig)
     pre: tuple[BuilderTransformConfig, ...] = field(default_factory=tuple)
     post: tuple[BuilderTransformConfig | ScalerTransformConfig, ...] = field(default_factory=tuple)
 
@@ -197,11 +239,17 @@ class Config:
 
     # keep raw config for MLflow logging
     _raw: dict = field(default_factory=dict, repr=False)
+    _raw_model: dict = field(default_factory=dict, repr=False)
 
     @property
     def raw_config(self) -> dict:
         """Get raw configuration dictionary for logging."""
         return self._raw
+
+    @property
+    def raw_model(self) -> dict:
+        """Get raw model configuration dictionary for logging."""
+        return self._raw_model
 
 
 # =============================================================================
@@ -279,35 +327,37 @@ class ConfigLoader:
         # parse model type (single source of truth for model identification)
         model_type = raw_config.get("model", {}).get("type", "HetGAT")
 
+        # resolve and load model config path
+        if model_config_path is None:
+            model_config_path = config_path.parent / f"conf_model_{model_type}.yaml"
+
+        if not model_config_path.exists():
+            raise FileNotFoundError(
+                f"Model config file not found: {model_config_path}. "
+                f"Expected config for model type '{model_type}'."
+            )
+
+        with open(model_config_path) as f:
+            model_raw_config = yaml.safe_load(f)
+
         # parse main config sections
-        model = cls._parse_model_config(
-            raw_config.get("model", {}),
-            model_type,
-            model_config_path,
-            config_path,
-        )
         training = cls._parse_training_config(raw_config.get("training", {}))
         optimizer = cls._parse_optimizer_config(raw_config.get("optimizer", {}))
         scheduler = cls._parse_scheduler_config(raw_config.get("scheduler", {}))
         loss = cls._parse_loss_config(raw_config.get("loss", {}))
         dataset = cls._parse_dataset_config(raw_config.get("dataset", {}))
+        model = cls._parse_model_config(model_type, model_raw_config.get("architecture", {}))
 
-        # parse target transform from training section
-        target_transform = cls._parse_target_transform(raw_config.get("training", {}))
+        # parse transforms
+        model_pre, model_post = cls._parse_transforms_config(model_raw_config.get("transforms", {}))
+        target_pre, target_post = cls._parse_transforms_config(
+            raw_config.get("training", {}).get("target", {})
+        )
 
-        # load model-specific config for pre and post transforms
-        pre_transforms: tuple[BuilderTransformConfig, ...] = tuple()
-        post_transforms: tuple[BuilderTransformConfig | ScalerTransformConfig, ...] = tuple()
-        if model_config_path is None:
-            model_config_path = config_path.parent / f"conf_model_{model_type}.yaml"
-
-        if model_config_path.exists():
-            pre_transforms, post_transforms = cls._load_model_transforms(model_config_path)
-
+        # combine target transforms with model transforms
         transforms = TransformsConfig(
-            target=target_transform,
-            pre=pre_transforms,
-            post=post_transforms,
+            pre=model_pre + target_pre,
+            post=model_post + target_post,
         )
 
         return Config(
@@ -319,66 +369,66 @@ class ConfigLoader:
             dataset=dataset,
             transforms=transforms,
             _raw=raw_config,
+            _raw_model=model_raw_config,
         )
 
     @classmethod
     def _parse_model_config(
         cls,
-        data: dict,
         model_type: str,
-        model_config_path: Path | None,
-        config_path: Path,
+        architecture_data: dict,
     ) -> ModelConfigWithArchitecture:
-        """Parse model configuration section with dynamic architecture loading.
+        """Parse model architecture configuration.
 
         Args:
-            data: Model section from main config.
-            model_type: Model type identifier (single source of truth).
-            model_config_path: Optional explicit path to model config.
-            config_path: Path to main config (for relative resolution).
+            model_type: Model type identifier.
+            architecture_data: Architecture configuration dictionary.
 
         Returns:
             ModelConfigWithArchitecture instance.
+
+        Raises:
+            ValueError: If model type not registered or architecture invalid.
         """
-        # Determine model config file path using model_type
-        if model_config_path is None:
-            model_config_path = config_path.parent / f"conf_model_{model_type}.yaml"
-
-        # Load model-specific architecture
-        architecture = None
-
-        if model_config_path.exists():
-            if model_type not in cls.MODEL_CONFIG_CLASSES:
-                raise ValueError(
-                    f"No config class registered for model type '{model_type}'. "
-                    f"Available types: {list(cls.MODEL_CONFIG_CLASSES.keys())}"
-                )
-
-            config_class = cls.MODEL_CONFIG_CLASSES[model_type]
-
-            # Read YAML file
-            with open(model_config_path) as f:
-                model_data = yaml.safe_load(f)
-
-            # Parse using the config class's from_dict method
-            try:
-                architecture = config_class.from_dict(model_data.get("architecture", {}))
-                if hasattr(architecture, "validate"):
-                    architecture.validate()
-            except Exception as e:
-                raise ValueError(
-                    f"Failed to load architecture for model type '{model_type}': {e}"
-                ) from e
-        else:
-            raise FileNotFoundError(
-                f"Model config file not found: {model_config_path}. "
-                f"Expected config for model type '{model_type}'."
+        if model_type not in cls.MODEL_CONFIG_CLASSES:
+            raise ValueError(
+                f"No config class registered for model type '{model_type}'. "
+                f"Available types: {list(cls.MODEL_CONFIG_CLASSES.keys())}"
             )
+
+        config_class = cls.MODEL_CONFIG_CLASSES[model_type]
+        try:
+            architecture = config_class.from_dict(architecture_data)
+            if hasattr(architecture, "validate"):
+                architecture.validate()
+        except Exception as e:
+            raise ValueError(
+                f"Failed to load architecture for model type '{model_type}': {e}"
+            ) from e
 
         return ModelConfigWithArchitecture(
             type=model_type,
             architecture=architecture,
         )
+
+    @classmethod
+    def _parse_transforms_config(
+        cls, transforms_data: dict
+    ) -> tuple[
+        tuple[BuilderTransformConfig, ...],
+        tuple[BuilderTransformConfig | ScalerTransformConfig, ...],
+    ]:
+        """Parse transforms configuration (pre and post).
+
+        Args:
+            transforms_data: Transforms configuration dictionary.
+
+        Returns:
+            Tuple of (pre_transforms, post_transforms).
+        """
+        pre = cls._parse_transform_list(transforms_data.get("pre", []))
+        post = cls._parse_transform_list(transforms_data.get("post", []))
+        return pre, post
 
     @classmethod
     def _parse_training_config(cls, data: dict) -> TrainingConfig:
@@ -427,124 +477,62 @@ class ConfigLoader:
         )
 
     @classmethod
-    def _parse_target_transform(cls, training_data: dict) -> TargetTransformConfig:
-        """Parse target transform from training section."""
-        target = training_data.get("target", {})
+    def _parse_transform_list(
+        cls, items: list[dict]
+    ) -> tuple[BuilderTransformConfig | ScalerTransformConfig, ...]:
+        """Parse a list of transforms (builders or scalers).
 
-        edge_type = target.get("type", ["nodes", "real", "nodes"])
-        if isinstance(edge_type, list):
-            edge_type = tuple(edge_type)
-
-        return TargetTransformConfig(
-            edge_type=edge_type,
-            label=target.get("label", "edge_vcr"),
-            transform=target.get("transform"),
-        )
-
-    @classmethod
-    def _load_model_transforms(
-        cls, model_config_path: Path
-    ) -> tuple[
-        tuple[BuilderTransformConfig, ...],
-        tuple[BuilderTransformConfig | ScalerTransformConfig, ...],
-    ]:
-        """
-        Load model-specific transforms.
+        Args:
+            items: List of transform dictionaries.
 
         Returns:
-            Tuple of (pre_transforms, post_transforms).
+            Tuple of parsed transform configs.
+
+        Raises:
+            ValueError: If transform structure is invalid.
         """
-        # load model-specific config
-        with open(model_config_path) as f:
-            model_data = yaml.safe_load(f) or {}
+        configs: list[BuilderTransformConfig | ScalerTransformConfig] = []
 
-        model_transforms = model_data.get("transforms", {}) or {}
-        model_pre = model_transforms.get("pre", []) or []
-        model_post = model_transforms.get("post", []) or []
+        for item in items:
+            if not isinstance(item, dict):
+                raise ValueError(f"Transform must be dict, got {type(item).__name__}")
 
-        # parse pre-transforms (list-based)
-        pre_transform_configs: list[BuilderTransformConfig] = []
+            if "builder" in item:
+                configs.append(BuilderTransformConfig(builder=item["builder"]))
+            elif "scaler" in item:
+                scaler_data = item["scaler"]
+                if not isinstance(scaler_data, dict):
+                    raise ValueError(f"Scaler data must be dict, got {type(scaler_data).__name__}")
 
-        if isinstance(model_pre, list):
-            for item in model_pre:
-                if not isinstance(item, dict):
-                    raise ValueError(
-                        f"Pre-transform item must be a dict, got {type(item).__name__}"
+                transform_type = scaler_data.get("transform")
+                if not transform_type:
+                    raise ValueError("Scaler must have 'transform' key")
+
+                # extract target/type/feature
+                target_value = scaler_data.get("target")
+                type_value = scaler_data.get("type")
+                feature_value = scaler_data.get("feature")
+
+                # extract kwargs (exclude reserved keys)
+                kwargs = {
+                    k: v
+                    for k, v in scaler_data.items()
+                    if k not in ("transform", "target", "type", "feature")
+                }
+
+                configs.append(
+                    ScalerTransformConfig(
+                        transform=transform_type,
+                        target=target_value,
+                        type=type_value,
+                        feature=feature_value,
+                        kwargs=kwargs,
                     )
+                )
+            else:
+                raise ValueError(f"Unknown transform type: {list(item.keys())}")
 
-                if "builder" in item:
-                    pre_transform_configs.append(BuilderTransformConfig(builder=item["builder"]))
-                else:
-                    raise NotImplementedError(
-                        f"Pre-transforms only support 'builder' key. Got: {list(item.keys())}"
-                    )
-
-        pre_transforms = tuple(pre_transform_configs)
-
-        # parse post-transforms (list-based)
-        post_transforms: list[BuilderTransformConfig | ScalerTransformConfig] = []
-
-        if isinstance(model_post, list):
-            for item in model_post:
-                if not isinstance(item, dict):
-                    continue
-
-                # Check if it's a builder or scaler
-                if "builder" in item:
-                    # Builder transform
-                    post_transforms.append(BuilderTransformConfig(builder=item["builder"]))
-                elif "scaler" in item:
-                    # Scaler transform (nested config)
-                    scaler_config = item["scaler"]
-
-                    # Parse type_spec:
-                    # - list of len > 1: edge type (can be a list in case of edge, or str for node)
-                    # - list of len 1 | str: single node type (str)
-                    type_spec_config = scaler_config.get("type")
-                    if not type_spec_config:
-                        raise ValueError("Scaler must specify 'type'")
-
-                    if isinstance(type_spec_config, list):
-                        type_spec = tuple(type_spec_config)
-                        if len(type_spec) == 1:
-                            type_spec = type_spec[0]
-                    elif isinstance(type_spec_config, str):
-                        type_spec = type_spec_config
-                    else:
-                        raise ValueError(
-                            f"Type spec must be string or list, got {type(type_spec_config).__name__}"
-                        )
-
-                    # parse feature
-                    feature = scaler_config.get("feature")
-                    if not feature:
-                        raise ValueError("Scaler must specify 'feature'")
-
-                    # parse transform type
-                    transform_type = scaler_config.get("transform")
-                    if not transform_type:
-                        raise ValueError(
-                            "Scaler must specify 'transform' type (e.g., 'minmax', 'norm', 'log')"
-                        )
-
-                    # parse transform kwargs
-                    kwargs = {
-                        k: v
-                        for k, v in scaler_config.items()
-                        if k not in ("type", "feature", "transform")
-                    }
-
-                    # create scaler config
-                    post_transforms.append(
-                        ScalerTransformConfig(
-                            type_spec=type_spec,
-                            feature=feature,
-                            transform=transform_type,
-                            kwargs=kwargs,
-                        )
-                    )
-
-        return pre_transforms, tuple(post_transforms)
+        return tuple(configs)
 
 
 # =============================================================================
