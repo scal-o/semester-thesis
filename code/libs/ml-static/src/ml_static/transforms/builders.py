@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, Callable
 import torch
 from torch_geometric.transforms import BaseTransform
 
+from ml_static.utils import validate_edge_attribute, validate_node_attribute
+
 if TYPE_CHECKING:
     from torch_geometric.data import HeteroData
 
@@ -83,16 +85,8 @@ def nodes_concat_demand_coords_scaled(data: HeteroData) -> HeteroData:
     Raises:
         AttributeError: If nodes.demand or nodes.coords don't exist.
     """
-    if not hasattr(data["nodes"], "demand"):
-        raise AttributeError(
-            "nodes.demand not found. Use 'nodes_add_demand' builder first, "
-            "or use 'nodes_concat_demand_coords_raw' to concat directly from _raw."
-        )
-    if not hasattr(data["nodes"], "coords"):
-        raise AttributeError(
-            "nodes.coords not found. Use 'nodes_add_coords' builder first, "
-            "or use 'nodes_concat_demand_coords_raw' to concat directly from _raw."
-        )
+    validate_node_attribute(data, "nodes", "demand")
+    validate_node_attribute(data, "nodes", "coords")
 
     data["nodes"].x = torch.cat(
         [data["nodes"].demand, data["nodes"].coords],
@@ -101,7 +95,7 @@ def nodes_concat_demand_coords_scaled(data: HeteroData) -> HeteroData:
     return data
 
 
-@register_builder("nodes_concat_demand_coords_direct")
+@register_builder("nodes_concat_demand_coords_raw")
 def nodes_concat_demand_coords_raw(data: HeteroData) -> HeteroData:
     """
     Concatenate demand and coords directly from _raw into nodes.x.
@@ -173,7 +167,7 @@ def real_edges_add_flow(data: HeteroData) -> HeteroData:
     return data
 
 
-@register_builder("real_edges_stack_capacity_free_flow")
+@register_builder("real_edges_stack_capacity_free_flow_raw")
 def real_edges_stack_capacity_free_flow(data: HeteroData) -> HeteroData:
     """
     Concatenate real edge features (capacity and free flow time).
@@ -181,6 +175,18 @@ def real_edges_stack_capacity_free_flow(data: HeteroData) -> HeteroData:
     edge_type = ("nodes", "real", "nodes")
     data[edge_type].edge_features = torch.stack(
         [data["_raw"].edge_capacity, data["_raw"].edge_free_flow_time], dim=1
+    )
+    return data
+
+
+@register_builder("real_edges_stack_capacity_free_flow_scaled")
+def real_edges_stack_capacity_free_flow_scaled(data: HeteroData) -> HeteroData:
+    """
+    Concatenate real edge features (capacity and free flow time).
+    """
+    edge_type = ("nodes", "real", "nodes")
+    data[edge_type].edge_features = torch.stack(
+        [data[edge_type].edge_capacity, data[edge_type].edge_free_flow_time], dim=1
     )
     return data
 
@@ -261,8 +267,8 @@ def nodes_clean_demand(data: HeteroData) -> HeteroData:
     """
     Remove demand from nodes after it's been used.
     """
-    if hasattr(data["nodes"], "demand"):
-        del data["nodes"].demand
+    validate_node_attribute(data, "nodes", "demand")
+    del data["nodes"].demand
     return data
 
 
@@ -271,8 +277,30 @@ def nodes_clean_coords(data: HeteroData) -> HeteroData:
     """
     Remove coords from nodes after they've been used.
     """
-    if hasattr(data["nodes"], "coords"):
-        del data["nodes"].coords
+    validate_node_attribute(data, "nodes", "coords")
+    del data["nodes"].coords
+    return data
+
+
+@register_builder("real_edges_clean_capacity")
+def real_edges_clean_capacity(data: HeteroData) -> HeteroData:
+    """
+    Remove capacity from real edges after it's been used.
+    """
+    edge_type = ("nodes", "real", "nodes")
+    validate_edge_attribute(data, edge_type, "edge_capacity")
+    del data[edge_type].edge_capacity
+    return data
+
+
+@register_builder("real_edges_clean_free_flow_time")
+def real_edges_clean_free_flow_time(data: HeteroData) -> HeteroData:
+    """
+    Remove free_flow_time from real edges after it's been used.
+    """
+    edge_type = ("nodes", "real", "nodes")
+    validate_edge_attribute(data, edge_type, "edge_free_flow_time")
+    del data[edge_type].edge_free_flow_time
     return data
 
 
