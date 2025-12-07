@@ -215,6 +215,10 @@ def plot_performance_diagnostics(pred_df: pd.DataFrame, dataset_name: str):
 
     plt.tight_layout(rect=(0, 0.03, 1, 0.95))
 
+    # only show plot in interactive mode
+    if plt.isinteractive():
+        plt.show()
+
     # return fig (so it can be saved externally)
     return fig
 
@@ -243,12 +247,16 @@ def plot_predictions(
     # get the scenario name
     scenario_name = dataset.scenario_names[scenario_index]
 
-    # load the network geometry
-    # access link_data_dir from the underlying dataset
-    link_data_dir = getattr(dataset, "link_data_dir", None)
-    if link_data_dir is None:
-        raise AttributeError("Dataset must have 'link_data_dir' attribute for plot_predictions")
-    gdf = gpd.read_parquet(link_data_dir / scenario_name / f"{scenario_name}.parquet")
+    # construct path to link data from network_dir
+    # structure: network_dir / scenarios_sta_results / scenario_name / scenario_name.parquet
+    network_dir = dataset.network_dir
+    link_data_file = (
+        network_dir / "scenarios_sta_results" / scenario_name / f"{scenario_name}.parquet"
+    )
+    if not link_data_file.exists():
+        raise FileNotFoundError(f"Link data file not found at {link_data_file}")
+
+    gdf = gpd.read_parquet(link_data_file)
 
     # add predictions and true values to the GeoDataFrame
     gdf["predicted_flow"] = data["prediction"]
@@ -267,7 +275,9 @@ def plot_predictions(
     vmin_flow = min(gdf["actual_flow"].min(), gdf["predicted_flow"].min())
     vmax_flow = max(gdf["actual_flow"].max(), gdf["predicted_flow"].max())
     vmin_error = 0
-    vmax_error = gdf["error"].max()
+    # vmax_error = gdf["error"].max()
+    # vmax_error = np.percentile(gdf["error"], 95)  # use 95th percentile to avoid outliers
+    vmax_error = 100
 
     # create a single figure with 2 rows and 3 columns
     fig, axes = plt.subplots(2, 3, figsize=(20, 13), sharex=True, sharey=True)
@@ -323,4 +333,9 @@ def plot_predictions(
 
     fig.suptitle(f"Dataset: {dataset_name}\nScenario: {scenario_name}\n", fontsize=16)
     plt.tight_layout()
-    plt.show()
+
+    # only show plot in interactive mode
+    if plt.isinteractive():
+        plt.show()
+
+    return fig
