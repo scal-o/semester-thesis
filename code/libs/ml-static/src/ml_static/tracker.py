@@ -264,5 +264,47 @@ class MLflowtracker:
 
         # Log to MLflow
         scenario_name = dataset.scenario_names[scenario_index]
-        mlflow.log_figure(fig, f"scenario_predictions/{scenario_name}_predictions.png")
+        mlflow.log_figure(
+            fig, f"scenario_predictions/{dataset_name}_{scenario_name}_predictions.png"
+        )
         plt.close(fig)
+
+    def log_random_scenario_predictions(
+        self,
+        model: torch.nn.Module,
+        datasets: dict[str, Dataset],
+        num_scenarios: int = 5,
+    ) -> None:
+        """
+        Log prediction plots for random scenarios from each dataset split.
+
+        Selects random scenarios from train, validation, and test splits
+        and generates prediction plots for each.
+
+        Args:
+            model: The trained GNN model.
+            datasets: Dictionary mapping split names to datasets
+                     (e.g., {"train": train_dataset, "val": val_dataset, "test": test_dataset}).
+            num_scenarios: Number of random scenarios to plot per split. Default is 5.
+        """
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model.to(device)
+        model.eval()
+
+        print(f"Logging scenario predictions ({num_scenarios} per split)...")
+
+        for split_name, dataset in tqdm(datasets.items(), desc="Logging Scenario Predictions"):
+            # Ensure we don't try to sample more scenarios than available
+            num_to_sample = min(num_scenarios, len(dataset))
+
+            # Sample random scenario indices
+            scenario_indices = np.random.choice(len(dataset), size=num_to_sample, replace=False)
+
+            for scenario_idx in scenario_indices:
+                try:
+                    self.log_scenario_predictions(model, dataset, split_name, scenario_idx)
+                except Exception as e:
+                    scenario_name = dataset.scenario_names[scenario_idx]
+                    print(
+                        f"Warning: Failed to log predictions for {split_name}/{scenario_name}: {e}"
+                    )
