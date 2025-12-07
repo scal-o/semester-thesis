@@ -58,8 +58,8 @@ def compute_predictions(
     # apply inverse transform if available
     transform = getattr(dataset, "transform", None)
     if transform and hasattr(transform, "inverse_transform"):
-        all_predictions = transform.inverse_transform(all_predictions)
-        all_true_values = transform.inverse_transform(all_true_values)
+        all_predictions = transform.inverse_transform(all_predictions, feature="target")
+        all_true_values = transform.inverse_transform(all_true_values, feature="target")
 
     # convert to numpy for DataFrame
     all_predictions = all_predictions.numpy()

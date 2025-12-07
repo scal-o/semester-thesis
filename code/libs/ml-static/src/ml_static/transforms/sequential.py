@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Self
 
+import numpy as np
+import torch
 from torch_geometric.transforms import BaseTransform
 
 from ml_static.config import BuilderTransformConfig, ScalerTransformConfig
@@ -35,6 +37,8 @@ class SequentialTransform(BaseTransform):
             transforms: List of BaseTransform instances to apply in sequence.
         """
         self.transforms = transforms
+        self.scalers = [t for t in transforms if isinstance(t, ScalerTransform)]
+        self.builders = [t for t in transforms if isinstance(t, BuilderTransform)]
 
     @classmethod
     def from_config(cls, config: Config, stage: str | None = None) -> Self:
@@ -98,3 +102,34 @@ class SequentialTransform(BaseTransform):
         """
         for transform in self.transforms:
             transform.fit_dataset(dataset)
+
+    def inverse_transform(
+        self, x: torch.Tensor | np.ndarray, feature: str
+    ) -> torch.Tensor | np.ndarray:
+        """
+        Apply inverse transformations in reverse order.
+
+        Args:
+            data: Input HeteroData object.
+
+        Returns:
+            HeteroData after applying inverse transformations.
+        """
+
+        target_scaler = [t for t in self.scalers if t.is_label][0]
+        feature_scalers = [t for t in self.scalers if not t.is_label]
+
+        transform = None
+        if feature == "target":
+            transform = target_scaler
+        else:
+            for scaler in feature_scalers:
+                spec, scaler_feature = scaler.target
+                if feature == scaler_feature:
+                    transform = scaler
+                    break
+
+        if transform is None:
+            raise ValueError(f"No scaler found for feature: {feature}")
+
+        return transform.inverse_transform(x)
