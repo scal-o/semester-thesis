@@ -2,3 +2,4 @@ from ml_static.models.factory import model_factory, register_model
 
 # Import model implementations to trigger registration
 from ml_static.models.HetGAT_no_preproc import *
+from ml_static.models.HetGAT_preproc import *
