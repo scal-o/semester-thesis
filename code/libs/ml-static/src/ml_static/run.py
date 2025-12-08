@@ -68,6 +68,7 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
 
     # define loss and optimizer
     loss = LossWrapper.from_config(config)
+    loss.register_transform(dataset_split.transform)
     optimizer = create_optimizer(config.optimizer, model.parameters())
     scheduler = create_scheduler(config.scheduler, optimizer)
 
@@ -130,6 +131,10 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
         stats = tracker.log_all_performance_reports(model, datasets)
         # print stats table
         print(stats)
+
+        print("--- Logging Sample Scenario Predictions ---")
+        # log prediction plots for random scenarios from each split
+        tracker.log_random_scenario_predictions(model, datasets, num_scenarios=5)
 
         return model, dataset_split
 
