@@ -168,10 +168,14 @@ class BaseScaler(ABC):
         Returns:
             Inverse-transformed data in same format as input.
         """
-        is_numpy = isinstance(x, np.ndarray)
-        x = torch.as_tensor(x)
-        x = self.inverse_fn(x)  # type: ignore[misc]
-        return x.numpy() if is_numpy else x
+        # fast path for training (preserves gradients, avoids conversions)
+        if isinstance(x, torch.Tensor):
+            return self.inverse_fn(x)
+
+        # slow path for numpy (preprocessing/inference)
+        out = torch.as_tensor(x)
+        out = self.inverse_fn(out)
+        return out.numpy()
 
     ## =======================
     ## === private methods ===
@@ -195,38 +199,52 @@ class BaseScaler(ABC):
     # norm transform methods
     def _norm_fit(self, x: torch.Tensor) -> dict:
         """Compute mean and std for normalization."""
-        return {"for": "norm", "mean": x.mean().item(), "std": x.std().item()}
+        return {"for": "norm", "mean": x.mean(), "std": x.std()}
 
     def _norm_transform(self, x: torch.Tensor) -> torch.Tensor:
         """Standard normalization: (x - mean) / std."""
         if self.params.get("for", "") != "norm":
             raise ValueError("Scaler not fitted. Call fit() before transforming.")
-        return (x - self.params["mean"]) / self.params["std"]
+        mean = self.params["mean"].to(x.device)
+        std = self.params["std"].to(x.device)
+        return (x - mean) / std
 
     def _norm_inverse(self, x: torch.Tensor) -> torch.Tensor:
         """Inverse standard normalization: x * std + mean."""
         if self.params.get("for", "") != "norm":
             raise ValueError("Scaler not fitted. Call fit() before inverse transforming.")
-        return x * self.params["std"] + self.params["mean"]
+        mean = self.params["mean"].to(x.device)
+        std = self.params["std"].to(x.device)
+        return x * std + mean
 
     # min-max transform methods
     def _minmax_fit(self, x: torch.Tensor) -> dict:
         """Compute min and max for min-max scaling."""
-        return {"for": "minmax", "min": x.min().item(), "max": x.max().item()}
+        factor = self.kwargs.get("factor", 100)
+        return {
+            "for": "minmax",
+            "min": x.min(),
+            "max": x.max(),
+            "factor": torch.tensor(factor, dtype=x.dtype),
+        }
 
     def _minmax_transform(self, x: torch.Tensor) -> torch.Tensor:
         """Min-max scaling: (x - min) / (max - min) * factor."""
         if self.params.get("for", "") != "minmax":
             raise ValueError("Scaler not fitted. Call fit() before transforming.")
-        factor = self.kwargs.get("factor", 100)
-        return (x - self.params["min"]) / (self.params["max"] - self.params["min"]) * factor
+        min_val = self.params["min"].to(x.device)
+        max_val = self.params["max"].to(x.device)
+        factor = self.params["factor"].to(x.device)
+        return (x - min_val) / (max_val - min_val) * factor
 
     def _minmax_inverse(self, x: torch.Tensor) -> torch.Tensor:
         """Inverse min-max scaling: x / factor * (max - min) + min."""
         if self.params.get("for", "") != "minmax":
             raise ValueError("Scaler not fitted. Call fit() before inverse transforming.")
-        factor = self.kwargs.get("factor", 100)
-        return x / factor * (self.params["max"] - self.params["min"]) + self.params["min"]
+        min_val = self.params["min"].to(x.device)
+        max_val = self.params["max"].to(x.device)
+        factor = self.params["factor"].to(x.device)
+        return x / factor * (max_val - min_val) + min_val
 
 
 class ScalerTransform(BaseScaler, BaseTransform):
