@@ -571,6 +571,9 @@ class BaseDataset(Dataset):
             omx_mat = omx.open_file(src / f"{scenario}_od.omx")
             od_mat = np.array(omx_mat["matrix"])
 
+            # scale down od matrix to trips in peak hour (from trips per day)
+            od_mat = od_mat / 10
+
             # get full od matrix (od_mat only contains centrid data)
             full_mat = pd.DataFrame(od_mat)
             full_mat = full_mat.reindex(
@@ -597,10 +600,10 @@ class BaseDataset(Dataset):
             real_edges -= 1
 
             # extract edge features and labels
-            edge_capacity = link_df["capacity"].values
+            edge_capacity = link_df["capacity"].values / 10  # scale down to peak hour
             edge_free_flow_time = link_df["free_flow_time"].values
             edge_vcr = link_df["volume_capacity_ratio"].values
-            edge_flow = link_df["flow"].values
+            edge_flow = link_df["flow"].values / 10  # scale down to peak hour
 
             # convert to tensors
             real_edges = torch.as_tensor(real_edges, dtype=torch.long).t()
@@ -611,25 +614,8 @@ class BaseDataset(Dataset):
 
             ##
             ## 3. Virtual Links
-            # we gather the virtual links from the od matrix
-            dmat = pd.DataFrame(full_mat)
-
-            # add origin col
-            dmat.insert(0, "origin", np.array(range(0, len(dmat))))
-
-            # melt dataframe
-            dmat = dmat.melt(
-                id_vars="origin",
-                value_vars=dmat.columns[1:],
-                var_name="destination",
-            )
-            dmat = dmat.loc[dmat["value"] > 0]
-
-            # create edge index
-            virtual_edges = dmat[["origin", "destination"]].astype("int32").values
-
-            # convert to tensor
-            virtual_edges = torch.tensor(virtual_edges, dtype=torch.long).t()
+            indices = np.where(full_mat > 0)
+            virtual_edges = torch.as_tensor(np.array(indices), dtype=torch.long)
 
             ##
             ## 4. Data
