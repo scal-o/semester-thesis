@@ -116,12 +116,12 @@ class SequentialTransform(BaseTransform):
             HeteroData after applying inverse transformations.
         """
 
-        target_scaler = [t for t in self.scalers if t.is_label][0]
+        target_scaler = [t for t in self.scalers if t.is_label]
         feature_scalers = [t for t in self.scalers if not t.is_label]
 
         transform = None
         if feature == "target":
-            transform = target_scaler
+            transform = target_scaler[0] if len(target_scaler) > 0 else None
         else:
             for scaler in feature_scalers:
                 spec, scaler_feature = scaler.target
@@ -130,6 +130,6 @@ class SequentialTransform(BaseTransform):
                     break
 
         if transform is None:
-            raise ValueError(f"No scaler found for feature: {feature}")
+            return x
 
         return transform.inverse_transform(x)
