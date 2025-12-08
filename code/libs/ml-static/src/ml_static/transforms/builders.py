@@ -116,6 +116,23 @@ def nodes_concat_demand_coords_raw(data: HeteroData) -> HeteroData:
     return data
 
 
+@register_builder("nodes_add_net_demand")
+def nodes_add_net_demand_raw(data: HeteroData) -> HeteroData:
+    """
+    Add net demand (inflow - outflow) to nodes.
+    """
+    demand = data["_raw"].demand
+
+    # compute incoming and outgoing flows
+    inflow = torch.sum(demand, dim=0)
+    outflow = torch.sum(demand, dim=1)
+
+    net_demand = inflow - outflow
+
+    data["nodes"].net_demand = net_demand
+    return data
+
+
 # === Real Edges Builders ===
 @register_builder("real_edges_add_index")
 def real_edges_add_index(data: HeteroData) -> HeteroData:
@@ -197,6 +214,7 @@ def target_flow(data: HeteroData) -> HeteroData:
     """
     Add flow target as y.
     """
+    data.target_var = "flow"
     data.y = data["_raw"].edge_flow
     return data
 
@@ -206,6 +224,7 @@ def target_vcr(data: HeteroData) -> HeteroData:
     """
     Add volume-capacity ratio target as y.
     """
+    data.target_var = "vcr"
     data.y = data["_raw"].edge_vcr
     return data
 
