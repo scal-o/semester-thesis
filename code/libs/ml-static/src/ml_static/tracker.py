@@ -54,6 +54,10 @@ class MLflowtracker:
         self.train_losses: list[float] = list()
         self.val_losses: list[float] = list()
 
+        # create loss components tracking (flat structure)
+        self.train_components: dict[str, list[float]] = {}
+        self.val_components: dict[str, list[float]] = {}
+
     def log_params(self, params: dict) -> None:
         """Log multiple parameters to MLflow.
 
@@ -78,6 +82,8 @@ class MLflowtracker:
         epoch: int,
         train_loss: float,
         val_loss: float,
+        train_components: dict | None = None,
+        val_components: dict | None = None,
         learning_rate: float | None = None,
     ) -> None:
         """Log metrics for a single epoch.
@@ -86,6 +92,8 @@ class MLflowtracker:
             epoch: Epoch number.
             train_loss: Training loss value.
             val_loss: Validation loss value.
+            train_components: Dictionary of training loss components.
+            val_components: Dictionary of validation loss components.
             learning_rate: Current learning rate.
         """
         self.train_losses.append(train_loss)
@@ -95,6 +103,23 @@ class MLflowtracker:
             "train_loss": train_loss,
             "val_loss": val_loss,
         }
+
+        # track and log train components
+        if train_components:
+            for key, value in train_components.items():
+                if key not in self.train_components:
+                    self.train_components[key] = []
+                self.train_components[key].append(value)
+                metrics[f"train_{key}"] = value
+
+        # track and log val components
+        if val_components:
+            for key, value in val_components.items():
+                if key not in self.val_components:
+                    self.val_components[key] = []
+                self.val_components[key].append(value)
+                metrics[f"val_{key}"] = value
+
         if learning_rate is not None:
             metrics["learning_rate"] = learning_rate
 
@@ -137,21 +162,101 @@ class MLflowtracker:
         )
 
     def log_training_curves(self) -> None:
-        """Generate and log training curves."""
+        """Generate and log training curves for total loss and components."""
+        # plot total loss
         fig = plt.figure(figsize=(12, 5))
         ax = fig.add_subplot(111)
 
-        # loss subplot
         ax.plot(self.train_losses, label="Training loss")
         ax.plot(self.val_losses, label="Validation loss")
         ax.set_xlabel("Epoch")
         ax.set_ylabel("Loss")
-        ax.set_title("Loss curves")
+        ax.set_title("Total Loss Curves")
         ax.legend()
 
-        # save and log plot
         mlflow.log_figure(fig, "training_stats/training_curves.png")
         plt.close(fig)
+
+        # if no components, return early
+        if not self.train_components and not self.val_components:
+            return
+
+        # extract unique component names (without prefix)
+        unweighted_components = set()
+        weighted_train_components = {}
+        weighted_val_components = {}
+
+        for key in self.train_components:
+            if key.startswith("unweighted_"):
+                unweighted_components.add(key.replace("unweighted_", ""))
+            elif key.startswith("weighted_"):
+                weighted_train_components[key] = self.train_components[key]
+
+        for key in self.val_components:
+            if key.startswith("unweighted_"):
+                unweighted_components.add(key.replace("unweighted_", ""))
+            elif key.startswith("weighted_"):
+                weighted_val_components[key] = self.val_components[key]
+
+        # plot unweighted components (one plot per component with train and val)
+        for component_name in unweighted_components:
+            fig = plt.figure(figsize=(12, 5))
+            ax = fig.add_subplot(111)
+
+            train_key = f"unweighted_{component_name}"
+            val_key = f"unweighted_{component_name}"
+
+            if train_key in self.train_components:
+                ax.plot(
+                    self.train_components[train_key],
+                    label=f"Training {component_name.replace('_', ' ')}",
+                )
+            if val_key in self.val_components:
+                ax.plot(
+                    self.val_components[val_key],
+                    label=f"Validation {component_name.replace('_', ' ')}",
+                )
+
+            ax.set_xlabel("Epoch")
+            ax.set_ylabel("Loss")
+            ax.set_title(f"Unweighted {component_name.replace('_', ' ').title()}")
+            ax.legend()
+
+            mlflow.log_figure(fig, f"training_stats/unweighted_{component_name}.png")
+            plt.close(fig)
+
+        # plot weighted components (all train in one plot, all val in another)
+        if weighted_train_components:
+            fig = plt.figure(figsize=(12, 5))
+            ax = fig.add_subplot(111)
+
+            for key, values in weighted_train_components.items():
+                label = key.replace("weighted_", "").replace("_", " ").title()
+                ax.plot(values, label=label)
+
+            ax.set_xlabel("Epoch")
+            ax.set_ylabel("Loss")
+            ax.set_title("Weighted Training Loss Components")
+            ax.legend()
+
+            mlflow.log_figure(fig, "training_stats/weighted_train_components.png")
+            plt.close(fig)
+
+        if weighted_val_components:
+            fig = plt.figure(figsize=(12, 5))
+            ax = fig.add_subplot(111)
+
+            for key, values in weighted_val_components.items():
+                label = key.replace("weighted_", "").replace("_", " ").title()
+                ax.plot(values, label=label)
+
+            ax.set_xlabel("Epoch")
+            ax.set_ylabel("Loss")
+            ax.set_title("Weighted Validation Loss Components")
+            ax.legend()
+
+            mlflow.log_figure(fig, "training_stats/weighted_val_components.png")
+            plt.close(fig)
 
     def log_model(self, model: torch.nn.Module, model_type: str, data) -> None:
         """Log model with related artifacts.

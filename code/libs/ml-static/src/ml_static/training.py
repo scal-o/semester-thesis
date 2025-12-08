@@ -14,7 +14,7 @@ def train(
     optimizer: torch.optim.Optimizer,
     criterion: LossWrapper,
     graph,
-) -> float:
+) -> tuple[float, dict]:
     """
     Perform a single training step.
 
@@ -25,24 +25,24 @@ def train(
         graph: A batch of graph data.
 
     Returns:
-        The training loss for this step.
+        Tuple of (training loss, loss components dict).
     """
     model.train()
     optimizer.zero_grad()
 
     pred = model(graph)
-    loss = criterion(pred, graph)
+    loss, loss_components = criterion(pred, graph)
     loss.backward()
     optimizer.step()
 
-    return loss.item()
+    return loss.item(), loss_components
 
 
 def validate(
     model: nn.Module,
     criterion: LossWrapper,
     graph,
-) -> float:
+) -> tuple[float, dict]:
     """
     Perform validation on a batch of graph data.
 
@@ -52,14 +52,14 @@ def validate(
         graph: A batch of graph data.
 
     Returns:
-        The validation loss.
+        Tuple of (validation loss, loss components dict).
     """
     model.eval()
     with torch.no_grad():
         pred = model(graph)
-        loss = criterion(pred, graph)
+        loss, loss_components = criterion(pred, graph)
 
-    return loss.item()
+    return loss.item(), loss_components
 
 
 def run_epoch(
@@ -69,7 +69,7 @@ def run_epoch(
     optimizer: torch.optim.Optimizer,
     loss: LossWrapper,
     device: torch.device,
-) -> tuple[float, float]:
+) -> tuple[float, float, dict, dict]:
     """
     Run a full epoch of training over the data loader.
 
@@ -78,34 +78,58 @@ def run_epoch(
         train_loader: DataLoader providing batches of graph data for training.
         val_loader: DataLoader providing batches of graph data for validation.
         optimizer: The optimizer for updating model parameters.
-        criterion: The loss function.
+        loss: The loss function.
+        device: Device to run computations on.
 
     Returns:
-        The average training loss over the epoch.
+        Tuple of (avg train loss, avg val loss, train components dict, val components dict).
     """
     e_train_loss = 0.0
     e_val_loss = 0.0
     train_batches = 0
     val_batches = 0
 
+    # accumulators for loss components
+    train_components_acc: dict[str, float] = {}
+    val_components_acc: dict[str, float] = {}
+
     for data in train_loader:
         data = data.to(device)
-        train_loss = train(model, optimizer, loss, data)
+        train_loss, train_components = train(model, optimizer, loss, data)
 
         e_train_loss += train_loss
         train_batches += 1
 
+        # accumulate components
+        for key, value in train_components.items():
+            if key not in train_components_acc:
+                train_components_acc[key] = 0.0
+            train_components_acc[key] += value
+
     for data in val_loader:
         data = data.to(device)
-        val_loss = validate(model, loss, data)
+        val_loss, val_components = validate(model, loss, data)
         e_val_loss += val_loss
         val_batches += 1
+
+        # accumulate components
+        for key, value in val_components.items():
+            if key not in val_components_acc:
+                val_components_acc[key] = 0.0
+            val_components_acc[key] += value
 
     # average loss
     e_train_loss /= train_batches
     e_val_loss /= val_batches
 
-    return e_train_loss, e_val_loss
+    # average components
+    for key in train_components_acc:
+        train_components_acc[key] /= train_batches
+
+    for key in val_components_acc:
+        val_components_acc[key] /= val_batches
+
+    return e_train_loss, e_val_loss, train_components_acc, val_components_acc
 
 
 def run_test(
@@ -120,8 +144,8 @@ def run_test(
     Args:
         model: The neural network model to evaluate.
         test_loader: DataLoader providing batches of graph data for testing.
-        criterion: The loss function.
-        get_target: A callable that extracts the target from the graph.
+        loss: The loss function.
+        device: Device to run computations on.
 
     Returns:
         The average test loss.
@@ -131,7 +155,7 @@ def run_test(
 
     for data in test_loader:
         data = data.to(device)
-        loss_out = validate(model, loss, data)
+        loss_out, _ = validate(model, loss, data)
         test_loss += loss_out
         test_batches += 1
 
