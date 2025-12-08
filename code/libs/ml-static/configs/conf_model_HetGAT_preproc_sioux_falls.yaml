@@ -1,36 +1,45 @@
 # Configuration for HetGAT model type
-type: "HetGAT_no_preproc"
+type: "HetGAT_preproc"
 
 architecture:
+
+  # Node preprocessor configuration
+  preprocessor:
+    input_channels: 26
+    output_channels: 32
+    layers:
+      - hidden_channels: 32
+
+
   # List of encoders for different edge types
   encoders:
     - type: "virtual"
-      input_channels: 418
+      input_channels: 32
       layers: 
         - type: "VirtualDependentAttentionLayer"
-          hidden_channels: 418
+          hidden_channels: 32
           num_heads: 2
         - type: "VirtualDependentAttentionLayer"
-          hidden_channels: 418 
+          hidden_channels: 32 
           num_heads: 2
 
     - type: "real"
-      input_channels: 418
+      input_channels: 32
       layers: 
         - type: "RealDependentAttentionLayer"
-          hidden_channels: 418
+          hidden_channels: 32
           num_heads: 2
         - type: "RealDependentAttentionLayer"
-          hidden_channels: 418
+          hidden_channels: 32
           num_heads: 2
 
   # Edge predictor configuration
   predictor:
     output_channels: 1
-    node_feature_dim: 418
+    node_feature_dim: 32
     edge_feature_dim: 2
     layers:
-      - hidden_channels: 418
+      - hidden_channels: 32
 
 # The 'transforms' section defines how the data should be prepared for this model.
 transforms:
