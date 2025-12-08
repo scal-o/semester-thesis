@@ -59,7 +59,7 @@ class LossWrapper(nn.Module):
         return cls(config.loss.type, **config.loss.kwargs)
 
     ## === forward call ===
-    def forward(self, pred, data):
+    def forward(self, pred, data) -> tuple[torch.Tensor, dict]:
         return self.loss_fn(pred, data)
 
     ## === public methods ===
@@ -126,15 +126,15 @@ class LossWrapper(nn.Module):
         self._validated = True
 
     ## === loss methods ===
-    def _l1_loss(self, pred, data):
+    def _l1_loss(self, pred, data) -> tuple[torch.Tensor, dict]:
         target = data.y
-        return F.l1_loss(pred, target)
+        return F.l1_loss(pred, target), {}
 
-    def _l2_loss(self, pred, data):
+    def _l2_loss(self, pred, data) -> tuple[torch.Tensor, dict]:
         target = data.y
-        return F.mse_loss(pred, target)
+        return F.mse_loss(pred, target), {}
 
-    def _custom_loss(self, pred, data):
+    def _custom_loss(self, pred, data) -> tuple[torch.Tensor, dict]:
         """
         Physics informed custom loss function.
         Uses:
@@ -161,12 +161,16 @@ class LossWrapper(nn.Module):
         real_capacity = self.transform.inverse_transform(
             data[real_edge].edge_capacity, feature="edge_capacity"
         )
+
         real_vcr = self.transform.inverse_transform(pred_vcr, feature="target")
         true_flow = self.transform.inverse_transform(data[real_edge].edge_flow, feature="edge_flow")
 
+        # apply softplus to the real vcr to ensure non-negativity
+        real_vcr = F.softplus(real_vcr)
+
         # compute flow predictions
         pred_flow = real_vcr * real_capacity
-        flow_loss = F.mse_loss(pred_flow, true_flow)
+        flow_loss = F.smooth_l1_loss(pred_flow, true_flow)
 
         # == conservation loss
         # compute inflow and outflow for each node
@@ -182,6 +186,21 @@ class LossWrapper(nn.Module):
 
         conservation_loss = F.l1_loss(pred_demand, net_demand)
 
+        # print loss components for debugging
+        print(
+            f"Loss components -- VCR: {vcr_loss.item():.2f}, Flow: {flow_loss.item():.2f}, Conservation: {conservation_loss.item():.2f}"
+        )
+
+        ## === components for logging (flat structure with prefixed keys)
+        losses = {
+            "unweighted_vcr_loss": vcr_loss.item(),
+            "unweighted_flow_loss": flow_loss.item(),
+            "unweighted_conservation_loss": conservation_loss.item(),
+            "weighted_vcr_loss": self.params["w_vcr"] * vcr_loss.item(),
+            "weighted_flow_loss": self.params["w_flow"] * flow_loss.item(),
+            "weighted_conservation_loss": self.params["w_conservation"] * conservation_loss.item(),
+        }
+
         ## === total loss
         total_loss = (
             self.params["w_vcr"] * vcr_loss
@@ -189,4 +208,4 @@ class LossWrapper(nn.Module):
             + self.params["w_conservation"] * conservation_loss
         )
 
-        return total_loss
+        return total_loss, losses
