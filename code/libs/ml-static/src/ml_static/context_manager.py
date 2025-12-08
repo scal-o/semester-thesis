@@ -130,7 +130,8 @@ class RunContext:
         mlflow.set_tracking_uri(self.tracking_uri)
         run = mlflow.get_run(self.run_id)
         experiment = mlflow.get_experiment(run.info.experiment_id)
-        self.model_dir: Path = self.download_path / experiment.name / self.run_id
+        run_name = run.data.tags.get("mlflow.runName", self.run_id)
+        self.model_dir: Path = self.download_path / experiment.name / run_name
         self.module_prefix: str = f"mlstatic_{self.run_id}"
 
         self.models_module: Any = None
