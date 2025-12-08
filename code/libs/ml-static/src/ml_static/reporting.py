@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn.functional as F
 from scipy.stats import norm
 from sklearn.metrics import mean_squared_error, r2_score
 from torch_geometric.loader import DataLoader
@@ -24,44 +25,90 @@ def compute_predictions(
 ) -> pd.DataFrame:
     """
     Generates a DataFrame with predictions and true values for a given dataset.
+    Automatically converts VCR predictions to flows if the model target was VCR.
+    Assumes 'edge_capacity' is present in the graph if target is VCR.
 
     Args:
         model: The trained GNN model.
         dataset: The dataset for the data split (train/val/test).
 
     Returns:
-        A pandas DataFrame with detailed prediction results in original scale.
+        A pandas DataFrame with detailed prediction results in original scale (flows).
     """
+
+    # fail if dataset does not have transform attribute
+    # this should ALWAYS be present, even if scaling was not used
+    # an absence means that the data was not transformed properly / is corrupted
+    if not hasattr(dataset, "transform"):
+        raise ValueError("No 'transform' attribute found in the dataset.")
+    transform = getattr(dataset, "transform")
+
+    # fail if data has no defined target variable
+    # check target variable from the first sample
+    sample = dataset[0]
+    if not hasattr(sample, "target_var"):
+        raise ValueError("No 'target_var' attribute found in the dataset samples.")
+    target_var = getattr(sample, "target_var")
+
     # create dataloader for efficient batch processing
     dataloader = DataLoader(dataset, batch_size=32, shuffle=False)
 
     all_predictions = []
     all_true_values = []
+    all_capacities = []
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
-
     model.eval()
+
     with torch.no_grad():
         for data in dataloader:
             data = data.to(device)
+
+            # extract possibly scaled predictions and true values
             predictions = model(data).squeeze()
             true_values = data.y
 
             all_predictions.append(predictions.cpu())
             all_true_values.append(true_values.cpu())
 
+            if target_var == "vcr":
+                # extract raw capacity for conversion to flow
+                # assumes edge_capacity is present in the graph
+                try:
+                    capacity = data["_raw"].edge_capacity
+                    all_capacities.append(capacity.cpu())
+                except AttributeError:
+                    raise AttributeError(
+                        "Target is VCR but 'edge_capacity' not found in graph. "
+                        "Check dataset builders."
+                    )
+
     # flatten the lists of arrays into single tensors
     all_predictions = torch.cat(all_predictions)
     all_true_values = torch.cat(all_true_values)
 
-    # apply inverse transform if available
-    transform = getattr(dataset, "transform", None)
-    if transform and hasattr(transform, "inverse_transform"):
-        all_predictions = transform.inverse_transform(all_predictions, feature="target")
-        all_true_values = transform.inverse_transform(all_true_values, feature="target")
+    # apply inverse transform
+    all_true_values = transform.inverse_transform(all_true_values, feature="target")
+    all_predictions = transform.inverse_transform(all_predictions, feature="target")
+    # ensure non-negativity of predictions (physical constraint)
+    all_predictions = F.relu(all_predictions)
 
-    # convert to numpy for DataFrame
+    # convert VCR to Flow if needed
+    if target_var == "vcr":
+        all_capacities = torch.cat(all_capacities)
+
+        # ensure shapes match
+        if not (all_predictions.shape == all_capacities.shape):
+            raise ValueError(
+                "Shape mismatch between predictions and capacities for VCR to Flow conversion."
+            )
+
+        # compute flows as vcr * capacity
+        all_predictions = all_predictions * all_capacities
+        all_true_values = all_true_values * all_capacities
+
+    # convert to numpy
     all_predictions = all_predictions.numpy()
     all_true_values = all_true_values.numpy()
 
@@ -88,6 +135,13 @@ def compute_errors(df: pd.DataFrame) -> pd.DataFrame:
     df["percentage_error"] = (df["error"] / df["true_value"]) * 100
     df["absolute_percentage_error"] = df["percentage_error"].abs()
 
+    # calculate GEH statistic
+    # GEH = sqrt(2 * (M - C)^2 / (M + C))
+    denominator = df["true_value"] + df["prediction"]
+    df["geh"] = np.sqrt(2 * (df["error"] ** 2) / denominator)
+    # handle 0/0 case where both true and pred are 0
+    df.loc[denominator == 0, "geh"] = 0.0
+
     # handle division by zero
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
 
@@ -112,13 +166,23 @@ def compute_statistics(pred_df: pd.DataFrame) -> pd.DataFrame:
     mdape = pred_df["absolute_percentage_error"].median()
     error_std = pred_df["error"].std()
 
+    # wMAPE: sum(|error|) / sum(true_value)
+    wmape = (pred_df["absolute_error"].sum() / pred_df["true_value"].sum()) * 100
+
+    # GEH statistics
+    mean_geh = pred_df["geh"].mean()
+    geh_under_5 = (pred_df["geh"] < 5).mean() * 100
+
     # create a dict -> DataFrame
     stats = {
         "MAE": mae,
         "RMSE": rmse,
         "R2": r2,
+        "wMAPE (%)": wmape,
         "MAPE (%)": mape,
         "MDAPE (%)": mdape,
+        "Mean GEH": mean_geh,
+        "% GEH < 5": geh_under_5,
         "Error Std Dev": error_std,
     }
 
@@ -261,7 +325,7 @@ def plot_predictions(
     # add predictions and true values to the GeoDataFrame
     gdf["predicted_flow"] = data["prediction"]
     gdf["actual_flow"] = data["true_value"]
-    gdf["error"] = data["absolute_percentage_error"]
+    gdf["error"] = data["geh"]
 
     # create a normalized direction identifier based on node ordering
     # direction 0: a_node < b_node, direction 1: a_node > b_node
@@ -275,9 +339,7 @@ def plot_predictions(
     vmin_flow = min(gdf["actual_flow"].min(), gdf["predicted_flow"].min())
     vmax_flow = max(gdf["actual_flow"].max(), gdf["predicted_flow"].max())
     vmin_error = 0
-    # vmax_error = gdf["error"].max()
-    # vmax_error = np.percentile(gdf["error"], 95)  # use 95th percentile to avoid outliers
-    vmax_error = 100
+    vmax_error = 10  # GEH > 10 is considered poor fit
 
     # create a single figure with 2 rows and 3 columns
     fig, axes = plt.subplots(2, 3, figsize=(20, 13), sharex=True, sharey=True)
@@ -312,13 +374,13 @@ def plot_predictions(
             vmin=vmin_error,
             vmax=vmax_error,
         )
-        axes[row_idx, 2].set_title(f"Prediction Error (%) - Direction {direction}")
+        axes[row_idx, 2].set_title(f"GEH Statistic - Direction {direction}")
 
         # add error stats textbox
         min_error = gdf_subset["error"].min()
         max_error = gdf_subset["error"].max()
         avg_error = gdf_subset["error"].mean()
-        textstr = f"Min: {min_error:.2f}%\nMax: {max_error:.2f}%\nAvg: {avg_error:.2f}%"
+        textstr = f"Min: {min_error:.2f}\nMax: {max_error:.2f}\nAvg: {avg_error:.2f}"
         props = dict(boxstyle="round", facecolor="wheat", alpha=0.5)
         axes[row_idx, 2].text(
             0.5,
