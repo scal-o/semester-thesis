@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from torch_geometric.data import HeteroData
 
-from ml_static.models.attention import (
+from ml_static.models.components import (
     AttentionLayerConfig,
     RealDependentAttentionLayer,
     VirtualDependentAttentionLayer,

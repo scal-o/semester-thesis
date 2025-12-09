@@ -159,15 +159,22 @@ class MLP(nn.Module):
         None: lambda x: x,
     }
 
-    def __init__(self, final_activation: Callable, layers: list[nn.Module]) -> None:
+    def __init__(self, layers: list[nn.Module], final_activation: str | None) -> None:
         """Initialize edge predictor with a list of linear layers.
 
         Args:
             layers: List of nn.Linear layers for the prediction stack.
+            final_activation: Callable activation function for the final layer.
         """
         super().__init__()
-        self.final_activation: Callable = final_activation
         self.layers = nn.ModuleList(layers)
+
+        if final_activation not in self.VALID_ACTIVATIONS:
+            raise ValueError(
+                f"Invalid final activation '{final_activation}'. "
+                f"Supported: {list(self.VALID_ACTIVATIONS.keys())}"
+            )
+        self.final_activation: Callable = self.VALID_ACTIVATIONS[final_activation]
 
     @classmethod
     def from_config(cls, config: MLPConfig) -> Self:
@@ -193,10 +200,9 @@ class MLP(nn.Module):
         # Final output layer
         linear_layers.append(nn.Linear(input_dim, config.output_channels))
 
-        # Convert activation string to callable
-        final_activation = cls.VALID_ACTIVATIONS.get(config.activation, cls.VALID_ACTIVATIONS[None])
+        final_activation = config.activation
 
-        return cls(final_activation, linear_layers)
+        return cls(linear_layers, final_activation)
 
     def _tensor_forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass for generic tensor input."""

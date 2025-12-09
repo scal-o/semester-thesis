@@ -8,6 +8,7 @@ import torch.nn as nn
 from torch_geometric.data import HeteroData
 from torch_geometric.utils import softmax
 
+from ml_static.models.components import MLP
 from ml_static.utils.validation import validate_edge_attribute
 
 # =============================================================================
@@ -112,7 +113,10 @@ class BaseDependentAttentionLayer(nn.Module):
 
         self.scale = self.head_dim**-0.5
 
-        self.lin_out = nn.Linear(hidden_dim, hidden_dim)
+        # linear module
+        layer1 = nn.Linear(hidden_dim, hidden_dim)
+        layer2 = nn.Linear(hidden_dim, hidden_dim)
+        self.lin_out = MLP([layer1, layer2], None)
         self.layer_norm = nn.LayerNorm(hidden_dim)
 
     def compute_edge_weights(
@@ -184,8 +188,68 @@ class BaseDependentAttentionLayer(nn.Module):
         return x + values
 
 
+## === adaptive weights submodules ===
+class RealAdaptiveWeights(nn.Module):
+    """Learns adaptive attention weights for real OD edges."""
+
+    def __init__(self, edge_dim: int, num_heads: int) -> None:
+        super().__init__()
+        self.edge_dim: int = edge_dim
+        self.num_heads: int = num_heads
+
+        # linear module
+        self.linear = nn.Linear(self.edge_dim, self.num_heads)
+
+    def forward(self, edge_features: torch.Tensor) -> torch.Tensor:
+        """Compute adaptive weights based on edge features.
+
+        Args:
+            edge_features: Edge attributes ``[num_edges, edge_dim]``.
+
+        Returns:
+            Adaptive weights ``[num_edges, num_heads]`` for each head.
+        """
+
+        return self.linear(edge_features)
+
+
+class VirtualAdaptiveWeights(nn.Module):
+    """Learns adaptive attention weights for virtual OD edges."""
+
+    def __init__(self, input_dim: int, num_heads: int) -> None:
+        super().__init__()
+        self.input_dim: int = input_dim * 2
+        self.num_heads: int = num_heads
+
+        # linear module
+        layer1 = nn.Linear(self.input_dim, self.input_dim)
+        layer2 = nn.Linear(self.input_dim, self.num_heads)
+        self.lin_v_edges = MLP([layer1, layer2], None)
+
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+        """Compute adaptive weights based on origin/destination features.
+
+        Args:
+            x: Node features ``[num_nodes, input_dim]``.
+            edge_index: Virtual edge connectivity ``[2, num_edges]``.
+
+        Returns:
+            Adaptive weights ``[num_edges, num_heads]`` for each head.
+        """
+
+        origin, destination = edge_index
+        pair_features = torch.cat([x[origin], x[destination]], dim=1)
+        return self.lin_v_edges(pair_features)
+
+
+## === attention layer implementations ===
 class RealDependentAttentionLayer(BaseDependentAttentionLayer):
     """Dependent attention variant that consumes real edge features."""
+
+    def __init__(self, input_dim: int, hidden_dim: int, num_heads: int) -> None:
+        super().__init__(input_dim, hidden_dim, num_heads)
+        # TODO: make edge_dim configurable
+        self.adaptive_layer = RealAdaptiveWeights(2, num_heads)
 
     def compute_edge_weights(
         self,
@@ -207,34 +271,7 @@ class RealDependentAttentionLayer(BaseDependentAttentionLayer):
         validate_edge_attribute(data, edge_type, "edge_features", expected_ndim=2)
         edge_features = data[edge_type].edge_features
 
-        # compute weights by summing edge features and broadcasting
-        weights = edge_features.sum(dim=1, keepdim=True)
-        return weights.repeat(1, self.num_heads)
-
-
-class VirtualAdaptiveWeights(nn.Module):
-    """Learns adaptive attention weights for virtual OD edges."""
-
-    def __init__(self, input_dim: int, num_heads: int) -> None:
-        super().__init__()
-        self.input_dim: int = input_dim * 2
-        self.num_heads: int = num_heads
-        self.lin_v_edges = nn.Linear(self.input_dim, self.num_heads)
-
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
-        """Compute adaptive weights based on origin/destination features.
-
-        Args:
-            x: Node features ``[num_nodes, input_dim]``.
-            edge_index: Virtual edge connectivity ``[2, num_edges]``.
-
-        Returns:
-            Adaptive weights ``[num_edges, num_heads]`` for each head.
-        """
-
-        origin, destination = edge_index
-        pair_features = torch.cat([x[origin], x[destination]], dim=1)
-        return self.lin_v_edges(pair_features)
+        return self.adaptive_layer(edge_features)
 
 
 class VirtualDependentAttentionLayer(BaseDependentAttentionLayer):
