@@ -8,7 +8,8 @@ import torch
 import torch.nn as nn
 
 from ml_static.config import ConfigLoader
-from ml_static.models import encoders, predictors, register_model
+from ml_static.models import register_model
+from ml_static.models.components import encoders, predictors
 from ml_static.utils.validation import validate_node_attribute
 
 if TYPE_CHECKING:

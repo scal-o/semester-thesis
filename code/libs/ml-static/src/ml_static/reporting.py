@@ -92,7 +92,7 @@ def compute_predictions(
     all_true_values = transform.inverse_transform(all_true_values, feature="target")
     all_predictions = transform.inverse_transform(all_predictions, feature="target")
     # ensure non-negativity of predictions (physical constraint)
-    all_predictions = F.softplus(all_predictions)
+    all_predictions = F.relu(all_predictions)
 
     # convert VCR to Flow if needed
     if target_var == "vcr":

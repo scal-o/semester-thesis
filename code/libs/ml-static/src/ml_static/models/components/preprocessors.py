@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import torch
 from torch_geometric.data import HeteroData
 
-from ml_static.models.components import MLP, MLPConfig
+from ml_static.models.components.mlp import MLP, MLPConfig
 from ml_static.utils import validate_node_attribute
 
 
@@ -37,7 +37,7 @@ class NodePreprocessor(MLP):
     def forward(
         self,
         x: torch.Tensor | None,
-        data: HeteroData,
+        data: HeteroData | None = None,
         type: str = "nodes",
     ) -> torch.Tensor:
         """
@@ -54,6 +54,8 @@ class NodePreprocessor(MLP):
 
         if x is not None:
             raise ValueError("Input `x` must be None. Node features are extracted from `data`.")
+        if data is None:
+            raise ValueError("Missing data argument.")
 
         # extract node features
         validate_node_attribute(data, type, "x", expected_ndim=2)

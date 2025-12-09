@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch_geometric.data import HeteroData
 from torch_geometric.utils import softmax
 
-from ml_static.models.components import MLP
+from ml_static.models.components.mlp import MLP
 from ml_static.utils.validation import validate_edge_attribute
 
 # =============================================================================

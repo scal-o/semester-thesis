@@ -8,7 +8,8 @@ import torch
 import torch.nn as nn
 
 from ml_static.config import ConfigLoader
-from ml_static.models import encoders, predictors, preprocessors, register_model
+from ml_static.models import register_model
+from ml_static.models.components import encoders, predictors, preprocessors
 from ml_static.utils.validation import validate_node_attribute
 
 if TYPE_CHECKING:
@@ -166,12 +167,8 @@ class HetGAT_preproc(nn.Module):
         return cls(preprocessor, encoders_list, predictor)
 
     def forward(self, graph: HeteroData):
-        # extract node features
-        validate_node_attribute(graph, "nodes", "x", expected_ndim=2)
-        g = graph["nodes"].x
-
-        # preprocess node features
-        g = self.preprocessor(g, graph)
+        # preprocess and extract node features
+        g = self.preprocessor(None, graph)
 
         # apply encoders sequentially
         for encoder in self.encoders:

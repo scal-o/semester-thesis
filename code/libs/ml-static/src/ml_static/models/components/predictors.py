@@ -6,7 +6,7 @@ from typing import Self
 import torch
 from torch_geometric.data import HeteroData
 
-from ml_static.models.components import MLP, MLPConfig
+from ml_static.models.components.mlp import MLP, MLPConfig
 from ml_static.utils import validate_edge_attribute
 
 
@@ -39,16 +39,9 @@ class PredictorConfig(MLPConfig):
         cls._validate_dict(data)
 
         input_channels = data["node_feature_dim"] * 2 + data["edge_feature_dim"]
-        output_channels = data["output_channels"]
-        layers = data["layers"]
-        activation = data.get("activation", None)
+        data["input_channels"] = input_channels
 
-        return cls(
-            input_channels=input_channels,
-            output_channels=output_channels,
-            activation=activation,
-            layers=layers,
-        )
+        return super().from_dict(data)
 
     @classmethod
     def _validate_dict(cls, data: dict) -> None:
@@ -82,7 +75,7 @@ class EdgePredictor(MLP):
     def forward(
         self,
         x: torch.Tensor | None,
-        data: HeteroData,
+        data: HeteroData | None = None,
         type: tuple | str = ("nodes", "real", "nodes"),
     ) -> torch.Tensor:
         """
@@ -99,6 +92,8 @@ class EdgePredictor(MLP):
 
         if x is None:
             raise ValueError("Missing x argument.")
+        if data is None:
+            raise ValueError("Missing data argument.")
 
         # extract edge index and features
         validate_edge_attribute(data, type, "edge_index", expected_ndim=2)
@@ -110,4 +105,4 @@ class EdgePredictor(MLP):
         # Concatenate origin and destination node features with edge features
         z = torch.cat([x[origin], x[destination], edge_features], dim=1)
 
-        return self._tensor_forward(z)
+        return self._tensor_forward(z).view(-1)

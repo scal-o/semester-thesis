@@ -18,20 +18,20 @@ architecture:
       layers: 
         - type: "VirtualDependentAttentionLayer"
           hidden_channels: 32
-          num_heads: 2
+          num_heads: 4
         - type: "VirtualDependentAttentionLayer"
           hidden_channels: 32 
-          num_heads: 2
+          num_heads: 4
 
     - type: "real"
       input_channels: 32
       layers: 
         - type: "RealDependentAttentionLayer"
           hidden_channels: 32
-          num_heads: 2
+          num_heads: 4
         - type: "RealDependentAttentionLayer"
           hidden_channels: 32
-          num_heads: 2
+          num_heads: 4
 
   # Edge predictor configuration
   predictor:

@@ -174,6 +174,7 @@ class MLP(nn.Module):
                 f"Invalid final activation '{final_activation}'. "
                 f"Supported: {list(self.VALID_ACTIVATIONS.keys())}"
             )
+
         self.final_activation: Callable = self.VALID_ACTIVATIONS[final_activation]
 
     @classmethod
@@ -219,8 +220,8 @@ class MLP(nn.Module):
     def forward(
         self,
         x: torch.Tensor | None,
-        data: Any,
-        type: Any,
+        data: Any = None,
+        type: Any = None,
     ) -> torch.Tensor:
         """
         Forward pass implementation for graphs.
