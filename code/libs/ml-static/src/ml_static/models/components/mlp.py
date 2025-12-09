@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any, Self
+from typing import Any, Callable, Self
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.data import HeteroData
-
-from ml_static.utils.validation import validate_edge_attribute
 
 # =============================================================================
 # Configuration for Linear Layers
@@ -76,31 +73,30 @@ class LinearLayerConfig:
 
 
 @dataclass(frozen=True)
-class PredictorConfig:
-    """Configuration for edge predictor.
+class MLPConfig:
+    """Configuration for general MLP.
 
     Attributes:
+        input_channels: Input feature dimension.
         output_channels: Final output dimension.
-        node_feature_dim: Input node feature dimension.
-        edge_feature_dim: Edge feature dimension.
+        activation: Final layer activation function.
         layers: Tuple of hidden layer configurations.
     """
 
+    input_channels: int
     output_channels: int
-    node_feature_dim: int
-    edge_feature_dim: int
+    activation: str | None
     layers: tuple[LinearLayerConfig, ...]
 
     @classmethod
     def from_dict(cls, data: dict) -> Self:
-        """Parse PredictorConfig from dictionary.
+        """Parse MLPConfig from dictionary.
 
         Args:
-            data: Dict with keys: output_channels, node_feature_dim,
-                  edge_feature_dim, layers.
+            data: Dict with keys: input_channels, output_channels, layers.
 
         Returns:
-            PredictorConfig instance.
+            MLPConfig instance.
 
         Raises:
             KeyError: If required keys are missing.
@@ -113,9 +109,9 @@ class PredictorConfig:
         layers = tuple(layers)
 
         return cls(
+            input_channels=data["input_channels"],
             output_channels=data["output_channels"],
-            node_feature_dim=data["node_feature_dim"],
-            edge_feature_dim=data["edge_feature_dim"],
+            activation=data.get("activation", None),
             layers=layers,
         )
 
@@ -129,7 +125,7 @@ class PredictorConfig:
         Raises:
             KeyError: If required keys are missing.
         """
-        required = {"output_channels", "node_feature_dim", "edge_feature_dim", "layers"}
+        required = {"input_channels", "output_channels", "layers"}
         missing = required - set(data.keys())
         if missing:
             raise KeyError(f"Missing required keys in predictor config: {missing}")
@@ -140,48 +136,53 @@ class PredictorConfig:
 
     def validate(self) -> None:
         """Validate predictor configuration."""
+        if self.input_channels < 1:
+            raise ValueError(f"input_channels must be >= 1, got {self.input_channels}")
         if self.output_channels < 1:
             raise ValueError(f"output_channels must be >= 1, got {self.output_channels}")
         if not self.layers:
             raise ValueError("Predictor must contain at least one hidden layer")
 
 
-# =============================================================================
-# Edge Predictor Implementation
-# =============================================================================
-
-
-class EdgePredictor(nn.Module):
+class MLP(nn.Module):
     """
-    MLP-based edge predictor that combines origin and destination node features
-    with edge features to predict a target value for each edge.
+    MLP.
 
     Supports configurable multi-layer architecture.
     """
 
-    def __init__(self, layers: list[nn.Module]) -> None:
+    VALID_ACTIVATIONS = {
+        "relu": F.relu,
+        "leaky_relu": F.leaky_relu,
+        "sigmoid": torch.sigmoid,
+        "tanh": torch.tanh,
+        None: lambda x: x,
+    }
+
+    def __init__(self, final_activation: Callable, layers: list[nn.Module]) -> None:
         """Initialize edge predictor with a list of linear layers.
 
         Args:
             layers: List of nn.Linear layers for the prediction stack.
         """
         super().__init__()
+        self.final_activation: Callable = final_activation
         self.layers = nn.ModuleList(layers)
 
     @classmethod
-    def from_config(cls, config: PredictorConfig) -> "EdgePredictor":
-        """Build edge predictor from typed config.
+    def from_config(cls, config: MLPConfig) -> Self:
+        """Build MLP from typed config.
 
         Args:
-            config: PredictorConfig instance.
+            config: MLPConfig instance.
 
         Returns:
-            Configured EdgePredictor instance.
+            Configured MLP instance.
         """
         config.validate()
 
-        # Start with concatenated features: 2*node_dim + edge_dim
-        input_dim = config.node_feature_dim * 2 + config.edge_feature_dim
+        # start with input channels
+        input_dim = config.input_channels
 
         linear_layers = []
 
@@ -192,40 +193,35 @@ class EdgePredictor(nn.Module):
         # Final output layer
         linear_layers.append(nn.Linear(input_dim, config.output_channels))
 
-        return cls(linear_layers)
+        # Convert activation string to callable
+        final_activation = cls.VALID_ACTIVATIONS.get(config.activation, cls.VALID_ACTIVATIONS[None])
+
+        return cls(final_activation, linear_layers)
+
+    def _tensor_forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass for generic tensor input."""
+
+        for i, layer in enumerate(self.layers):
+            x = layer(x)
+            # Apply activation to all layers except the last
+            if i < len(self.layers) - 1:
+                x = F.leaky_relu(x)
+
+        x = self.final_activation(x)
+        return x
 
     def forward(
         self,
-        x: torch.Tensor,
-        data: HeteroData,
-        edge_type: tuple | str = ("nodes", "real", "nodes"),
+        x: torch.Tensor | None,
+        data: Any,
+        type: Any,
     ) -> torch.Tensor:
         """
-        Forward pass to predict edge values.
+        Forward pass implementation for graphs.
 
-        Args:
-            x: Node features tensor of shape [num_nodes, input_dim].
-            data: Heterogeneous graph data containing edge information.
-            edge_type: Edge type identifier in the HeteroData object.
-
-        Returns:
-            Predicted edge values tensor of shape [num_edges].
+        Subclasses should override this method.
         """
-        # extract edge index and features
-        validate_edge_attribute(data, edge_type, "edge_index", expected_ndim=2)
-        edge_index = data[edge_type].edge_index
-        validate_edge_attribute(data, edge_type, "edge_features", expected_ndim=2)
-        edge_features = data[edge_type].edge_features
-        origin, destination = edge_index
+        if x is None:
+            raise ValueError("Input `x` must be a tensor. This can be overridden in subclasses.")
 
-        # Concatenate origin and destination node features with edge features
-        z = torch.cat([x[origin], x[destination], edge_features], dim=1)
-
-        # Pass through layer stack with activations
-        for i, layer in enumerate(self.layers):
-            z = layer(z)
-            # Apply activation to all layers except the last
-            if i < len(self.layers) - 1:
-                z = F.leaky_relu(z)
-
-        return z.view(-1)
+        return self._tensor_forward(x)
