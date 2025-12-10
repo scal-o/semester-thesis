@@ -103,6 +103,8 @@ class BaseDependentAttentionLayer(nn.Module):
             msg = "hidden_dim must be divisible by num_heads"
             raise ValueError(msg)
 
+        self.layer_norm = nn.LayerNorm(input_dim)
+
         self.hidden_dim: int = hidden_dim
         self.num_heads: int = num_heads
         self.head_dim: int = hidden_dim // num_heads
@@ -117,7 +119,6 @@ class BaseDependentAttentionLayer(nn.Module):
         layer1 = nn.Linear(hidden_dim, hidden_dim)
         layer2 = nn.Linear(hidden_dim, hidden_dim)
         self.lin_out = MLP([layer1, layer2], None)
-        self.layer_norm = nn.LayerNorm(hidden_dim)
 
     def compute_edge_weights(
         self, x: torch.Tensor, data: HeteroData, edge_type: tuple | str, **kwargs
@@ -156,15 +157,18 @@ class BaseDependentAttentionLayer(nn.Module):
         edge_index = data[edge_type].edge_index
         origin, destination = edge_index
 
-        q = self.lin_q(x).view(num_nodes, self.num_heads, self.head_dim)
-        k = self.lin_k(x).view(num_nodes, self.num_heads, self.head_dim)
-        v = self.lin_v(x).view(num_nodes, self.num_heads, self.head_dim)
+        # pre layer norm
+        x_norm = self.layer_norm(x)
+
+        q = self.lin_q(x_norm).view(num_nodes, self.num_heads, self.head_dim)
+        k = self.lin_k(x_norm).view(num_nodes, self.num_heads, self.head_dim)
+        v = self.lin_v(x_norm).view(num_nodes, self.num_heads, self.head_dim)
 
         q_edges = q[origin]
         k_edges = k[destination]
         scores = (q_edges * k_edges).sum(dim=-1) * self.scale
 
-        edge_weights = self.compute_edge_weights(x, data, edge_type, **kwargs)
+        edge_weights = self.compute_edge_weights(x_norm, data, edge_type, **kwargs)
         weighted_scores = scores * edge_weights
 
         attention_weights = softmax(weighted_scores, origin, num_nodes=num_nodes)
@@ -183,7 +187,6 @@ class BaseDependentAttentionLayer(nn.Module):
 
         values = values.reshape(num_nodes, self.hidden_dim)
         values = self.lin_out(values)
-        values = self.layer_norm(values)
 
         return x + values
 
