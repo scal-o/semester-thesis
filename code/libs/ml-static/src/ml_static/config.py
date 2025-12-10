@@ -58,9 +58,15 @@ class ModelArchitectureConfig(Protocol):
 class OptimizerConfig:
     """Configuration for optimizer."""
 
-    type: Literal["adam", "sgd"] = "adam"
+    type: Literal["adam", "adamw", "sgd"] = "adam"
     learning_rate: float = 0.001
-    momentum: float = 0.9  # only used for SGD
+
+    # SGD parameters
+    momentum: float = 0.9
+
+    # Adam/AdamW parameters
+    weight_decay: float = 0.0
+    amsgrad: bool = False
 
     def __post_init__(self) -> None:
         if not 0 < self.learning_rate < 1:
@@ -71,9 +77,33 @@ class OptimizerConfig:
 class SchedulerConfig:
     """Configuration for learning rate scheduler."""
 
-    type: Literal["reduce_on_plateau"] = "reduce_on_plateau"
-    factor: float = 0.1
-    patience: int = 10
+    type: Literal["reduce_on_plateau", "one_cycle", "cosine_annealing"] = "reduce_on_plateau"
+
+    # ReduceLROnPlateau parameters
+    factor: float = 0.5
+    patience: int = 20
+
+    # OneCycleLR parameters
+    max_lr: float = 0.01
+    epochs: int | None = None
+    steps_per_epoch: int | None = None
+    pct_start: float = 0.3
+    anneal_strategy: Literal["cos", "linear"] = "cos"
+
+    # CosineAnnealingWarmRestarts parameters
+    T_0: int = 20
+    T_mult: int = 2
+    eta_min: float = 1e-6
+
+
+@dataclass(frozen=True)
+class EarlyStoppingConfig:
+    """Configuration for early stopping."""
+
+    enabled: bool = False
+    patience: int = 50
+    min_delta: float = 0.0
+    mode: Literal["min", "max"] = "min"
 
 
 @dataclass(frozen=True)
@@ -233,6 +263,7 @@ class Config:
     training: TrainingConfig = field(default_factory=TrainingConfig)
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
+    early_stopping: EarlyStoppingConfig = field(default_factory=EarlyStoppingConfig)
     loss: LossConfig = field(default_factory=LossConfig)
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     transforms: TransformsConfig = field(default_factory=TransformsConfig)
@@ -344,6 +375,7 @@ class ConfigLoader:
         training = cls._parse_training_config(raw_config.get("training", {}))
         optimizer = cls._parse_optimizer_config(raw_config.get("optimizer", {}))
         scheduler = cls._parse_scheduler_config(raw_config.get("scheduler", {}))
+        early_stopping = cls._parse_early_stopping_config(raw_config.get("early_stopping", {}))
         loss = cls._parse_loss_config(raw_config.get("loss", {}))
         dataset = cls._parse_dataset_config(raw_config.get("dataset", {}))
         model = cls._parse_model_config(
@@ -367,6 +399,7 @@ class ConfigLoader:
             training=training,
             optimizer=optimizer,
             scheduler=scheduler,
+            early_stopping=early_stopping,
             loss=loss,
             dataset=dataset,
             transforms=transforms,
@@ -448,6 +481,8 @@ class ConfigLoader:
             type=data.get("type", "adam").lower(),
             learning_rate=data.get("learning_rate", 0.001),
             momentum=data.get("momentum", 0.9),
+            weight_decay=data.get("weight_decay", 0.0),
+            amsgrad=data.get("amsgrad", False),
         )
 
     @classmethod
@@ -455,8 +490,29 @@ class ConfigLoader:
         """Parse scheduler configuration section."""
         return SchedulerConfig(
             type=data.get("type", "reduce_on_plateau").lower(),
+            # ReduceLROnPlateau
             factor=data.get("factor", 0.1),
             patience=data.get("patience", 10),
+            # OneCycleLR
+            max_lr=data.get("max_lr", 0.01),
+            epochs=data.get("epochs"),
+            steps_per_epoch=data.get("steps_per_epoch"),
+            pct_start=data.get("pct_start", 0.3),
+            anneal_strategy=data.get("anneal_strategy", "cos"),
+            # CosineAnnealingWarmRestarts
+            T_0=data.get("T_0", 10),
+            T_mult=data.get("T_mult", 1),
+            eta_min=data.get("eta_min", 0.0),
+        )
+
+    @classmethod
+    def _parse_early_stopping_config(cls, data: dict) -> EarlyStoppingConfig:
+        """Parse early stopping configuration section."""
+        return EarlyStoppingConfig(
+            enabled=data.get("enabled", False),
+            patience=data.get("patience", 50),
+            min_delta=data.get("min_delta", 0.0),
+            mode=data.get("mode", "min"),
         )
 
     @classmethod

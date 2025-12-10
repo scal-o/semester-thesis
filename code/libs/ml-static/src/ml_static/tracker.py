@@ -146,6 +146,16 @@ class MLflowtracker:
         """
         mlflow.log_metric("test_loss", test_loss)
 
+    def log_best_model_info(self, best_epoch: int, best_val_loss: float) -> None:
+        """Log information about the best model.
+
+        Args:
+            best_epoch: Epoch number where best validation loss was achieved.
+            best_val_loss: Best validation loss value.
+        """
+        mlflow.log_metric("best_val_loss", best_val_loss)
+        mlflow.log_metric("best_epoch", best_epoch)
+
     def log_dataset_info(self, dataset_split) -> None:
         """Log dataset split information.
 
