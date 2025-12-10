@@ -154,7 +154,7 @@ class LossWrapper(nn.Module):
         # compute predictions for vcr
         pred_vcr = pred
         # compute loss
-        vcr_loss = F.mse_loss(pred_vcr, data.y)
+        vcr_loss = F.l1_loss(pred_vcr, data.y)
 
         # == flow loss
         # retrieve real capacity and vcr values
@@ -164,9 +164,6 @@ class LossWrapper(nn.Module):
 
         real_vcr = self.transform.inverse_transform(pred_vcr, feature="target")
         true_flow = self.transform.inverse_transform(data[real_edge].edge_flow, feature="edge_flow")
-
-        # apply softplus to the real vcr to ensure non-negativity
-        real_vcr = F.softplus(real_vcr)
 
         # compute flow predictions
         pred_flow = real_vcr * real_capacity
@@ -182,14 +179,9 @@ class LossWrapper(nn.Module):
         outflow = scatter(pred_flow, edge_index[0], dim=0, dim_size=num_nodes, reduce="sum")
 
         pred_demand = inflow - outflow
-        net_demand = self.transform.inverse_transform(data["nodes"].net_demand, feature="demand")
+        net_demand = data["nodes"].net_demand
 
         conservation_loss = F.l1_loss(pred_demand, net_demand)
-
-        # print loss components for debugging
-        print(
-            f"Loss components -- VCR: {vcr_loss.item():.2f}, Flow: {flow_loss.item():.2f}, Conservation: {conservation_loss.item():.2f}"
-        )
 
         ## === components for logging (flat structure with prefixed keys)
         losses = {
