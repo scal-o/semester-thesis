@@ -65,16 +65,21 @@ transforms:
             type: ["nodes"]
             feature: "demand"
             transform: "minmax"
-            factor: 100
+            factor: 1
+        - scaler: 
+            type: ["nodes"]
+            feature: "coords"
+            transform: "minmax"
+            factor: 1
         - builder: "nodes_concat_demand_coords_scaled"
-
         - scaler: 
             type: ["nodes", "real", "nodes"]
             feature: "edge_capacity"
-            transform: "norm"
+            transform: "minmax"
+            factor: 1
         - scaler: 
             type: ["nodes", "real", "nodes"]
             feature: "edge_free_flow_time"
-            transform: "norm"
+            transform: "minmax"
+            factor: 1
         - builder: "real_edges_stack_capacity_free_flow_scaled"
-

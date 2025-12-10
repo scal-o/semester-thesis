@@ -6,40 +6,52 @@ architecture:
   # Node preprocessor configuration
   preprocessor:
     input_channels: 418
-    output_channels: 32
+    output_channels: 64
     layers:
-      - hidden_channels: 128
+      - hidden_channels: 192
 
 
   # List of encoders for different edge types
   encoders:
     - type: "virtual"
-      input_channels: 32
+      input_channels: 64
       layers: 
         - type: "VirtualDependentAttentionLayer"
-          hidden_channels: 32
-          num_heads: 4
+          hidden_channels: 64
+          num_heads: 8
         - type: "VirtualDependentAttentionLayer"
-          hidden_channels: 32 
-          num_heads: 4
+          hidden_channels: 64 
+          num_heads: 8
 
     - type: "real"
-      input_channels: 32
+      input_channels: 64
       layers: 
         - type: "RealDependentAttentionLayer"
-          hidden_channels: 32
-          num_heads: 4
+          hidden_channels: 64
+          num_heads: 8
         - type: "RealDependentAttentionLayer"
-          hidden_channels: 32
-          num_heads: 4
+          hidden_channels: 64
+          num_heads: 8
+        - type: "RealDependentAttentionLayer"
+          hidden_channels: 64
+          num_heads: 8
+        - type: "RealDependentAttentionLayer"
+          hidden_channels: 64
+          num_heads: 8
+        - type: "RealDependentAttentionLayer"
+          hidden_channels: 64
+          num_heads: 8
+        - type: "RealDependentAttentionLayer"
+          hidden_channels: 64
+          num_heads: 8
 
   # Edge predictor configuration
   predictor:
     output_channels: 1
-    node_feature_dim: 32
+    node_feature_dim: 64
     edge_feature_dim: 2
     layers:
-      - hidden_channels: 32
+      - hidden_channels: 64
 
 # The 'transforms' section defines how the data should be prepared for this model.
 transforms:
@@ -65,16 +77,22 @@ transforms:
             type: ["nodes"]
             feature: "demand"
             transform: "minmax"
-            factor: 100
+            factor: 1
+        - scaler: 
+            type: ["nodes"]
+            feature: "coords"
+            transform: "minmax"
+            factor: 1
         - builder: "nodes_concat_demand_coords_scaled"
-
         - scaler: 
             type: ["nodes", "real", "nodes"]
             feature: "edge_capacity"
-            transform: "norm"
+            transform: "minmax"
+            factor: 1
         - scaler: 
             type: ["nodes", "real", "nodes"]
             feature: "edge_free_flow_time"
-            transform: "norm"
+            transform: "minmax"
+            factor: 1
         - builder: "real_edges_stack_capacity_free_flow_scaled"
 
