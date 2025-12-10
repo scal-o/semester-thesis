@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
@@ -183,9 +184,10 @@ class HetGAT_preproc(nn.Module):
 
         Returns:
             Dictionary containing state_dict and model metadata.
+            The state_dict is deep-copied to ensure independence from the model.
         """
         return {
-            "state_dict": self.state_dict(),
+            "state_dict": copy.deepcopy(self.state_dict()),
             "model_type": "HetGAT_preproc",
         }
 
