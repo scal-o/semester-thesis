@@ -1,3 +1,4 @@
+import random
 from pathlib import Path
 
 import click
@@ -9,6 +10,7 @@ from tqdm import tqdm
 
 from ml_static.config import Config, load_config
 from ml_static.data import DatasetSplit
+from ml_static.early_stopping import EarlyStopping
 from ml_static.factories import create_optimizer, create_scheduler
 from ml_static.losses import LossWrapper
 from ml_static.models import model_factory
@@ -34,15 +36,15 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # set seed
-    seed = config.training.seed if config.training.seed is not None else 42
+    seed = config.training.seed if config.training.seed is not None else random.randint(0, 10000)
     pg.seed_everything(seed)
 
     # create dataset splits with transforms from config
-    dataset_split = DatasetSplit.from_config(config)
+    dataset_split = DatasetSplit.from_config(config, force_reload=False)
 
     # create dataloaders
     train_loader = DataLoader(
-        dataset_split["train"], batch_size=config.training.batch_size, shuffle=False
+        dataset_split["train"], batch_size=config.training.batch_size, shuffle=True
     )
     val_loader = DataLoader(
         dataset_split["val"], batch_size=len(dataset_split["val"]), shuffle=False
@@ -70,7 +72,22 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
     loss = LossWrapper.from_config(config)
     loss.register_transform(dataset_split.transform)
     optimizer = create_optimizer(config.optimizer, model.parameters())
-    scheduler = create_scheduler(config.scheduler, optimizer)
+
+    scheduler_runtime_params = {
+        "epochs": config.training.epochs,
+        "steps_per_epoch": len(train_loader),
+    }
+    print(scheduler_runtime_params)
+    scheduler = create_scheduler(config.scheduler, optimizer, scheduler_runtime_params)
+
+    # initialize early stopping if enabled
+    early_stopping = None
+    if config.early_stopping.enabled:
+        early_stopping = EarlyStopping(
+            patience=config.early_stopping.patience,
+            min_delta=config.early_stopping.min_delta,
+            mode=config.early_stopping.mode,
+        )
 
     # define training epochs
     epochs = config.training.epochs
@@ -90,7 +107,7 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
 
         for epoch in tqdm(range(1, epochs + 1), desc=run_description):
             # train/val phase
-            e_train_loss, e_val_loss = run_epoch(
+            e_train_loss, e_val_loss, train_components, val_components = run_epoch(
                 model,
                 data_iterator,
                 val_loader,
@@ -100,18 +117,49 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
             )
 
             # step scheduler
-            scheduler.step(e_val_loss)
+            if check_run:
+                scheduler.step(e_train_loss)
+            else:
+                scheduler.step(e_val_loss)
 
             # get current learning rate
             current_lr = scheduler.get_last_lr()[0]
 
             # log metrics
-            tracker.log_epoch(epoch, e_train_loss, e_val_loss, current_lr)
+            tracker.log_epoch(
+                epoch, e_train_loss, e_val_loss, train_components, val_components, current_lr
+            )
+
+            # check early stopping
+            if early_stopping is not None:
+                if early_stopping(e_val_loss, model, epoch):
+                    print(
+                        f"\nEarly stopping triggered at epoch {epoch}. "
+                        f"Best validation loss: {early_stopping.best_metric:.4f} at epoch {early_stopping.best_epoch}"
+                    )
+                    break
 
             if epoch % 10 == 0:
                 print(
                     f"Epoch {epoch}/{epochs} - Train Loss: {e_train_loss:.4f} - Val Loss: {e_val_loss:.4f} - LR: {current_lr:.2e}"
                 )
+
+                if val_components:
+                    comp_str = "Loss components: " + " - ".join(
+                        f"{k.replace('unweighted_', '')}: {v:.2f}"
+                        for k, v in val_components.items()
+                        if k.startswith("unweighted_")
+                    )
+                    print(comp_str)
+
+        # load best model if early stopping was used
+        if early_stopping is not None:
+            early_stopping.load_best_model(model)
+            tracker.log_best_model_info(early_stopping.best_epoch, early_stopping.best_metric)
+            print(
+                f"\nLoaded best model from epoch {early_stopping.best_epoch} "
+                f"(val_loss: {early_stopping.best_metric:.4f})"
+            )
 
         # test phase
         test_loss = run_test(model, test_loader, loss, device)
