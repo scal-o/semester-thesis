@@ -318,7 +318,7 @@ class RunContext:
             if not hasattr(self.data_module, "STADataset"):
                 raise AttributeError("Data module does not define 'STADataset' class")
 
-            self._dataset = self.data_module.STADataset.from_config(self.config)
+            self._dataset = self.data_module.STADataset.from_config(self.config, force_reload=True)
 
         return self._dataset
 
@@ -339,6 +339,8 @@ class RunContext:
             if not hasattr(self.data_module, "DatasetSplit"):
                 raise AttributeError("Data module does not define 'DatasetSplit' class")
 
-            self._data_split = self.data_module.DatasetSplit.from_config(self.config)
+            self._data_split = self.data_module.DatasetSplit.from_config(
+                self.config, force_reload=True
+            )
 
         return self._data_split
