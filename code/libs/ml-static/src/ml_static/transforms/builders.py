@@ -246,20 +246,42 @@ def virtual_edges_add_index(data: HeteroData) -> HeteroData:
     return data
 
 
-# def virtual_edges_add_od_demand(data: HeteroData) -> HeteroData:
-#     """
-#     Add OD demand to virtual edges.
+@register_builder("virtual_edges_add_demand")
+def virtual_edges_add_demand(data: HeteroData) -> HeteroData:
+    """Extract OD demand from scenario data and add as virtual edge attributes.
 
-#     Args:
-#         data: HeteroData with _raw attribute containing demand matrix.
+    Assumes:
+    - data["_raw"].demand: tensor [num_nodes, num_nodes] OD matrix
+    - data[("nodes", "virtual", "nodes")].edge_index exists
 
-#     Returns:
-#         HeteroData with virtual edges containing flattened OD demand.
-#     """
-#     edge_type = ("nodes", "virtual", "nodes")
-#     # Flatten demand matrix to match virtual edge structure
-#     data[edge_type].edge_attr = data["_raw"].demand.flatten()
-#     return data
+    Adds:
+    - data[("nodes", "virtual", "nodes")].edge_attr: scalar demand [num_edges]
+
+    Args:
+        data: HeteroData with _raw attribute containing demand matrix and virtual edges.
+
+    Returns:
+        HeteroData with virtual edge demand attributes set.
+    """
+    virtual_edge_type = ("nodes", "virtual", "nodes")
+
+    validate_edge_attribute(data, virtual_edge_type, "edge_index", expected_ndim=2)
+    validate_node_attribute(data, "_raw", "demand", expected_ndim=2)
+
+    edge_index = data[virtual_edge_type].edge_index
+
+    # get demand matrix (already as tensor)
+    demand_matrix = data["_raw"].demand  # [num_nodes, num_nodes]
+
+    # extract demand values for each OD pair
+    sources = edge_index[0]
+    targets = edge_index[1]
+    demand_values = demand_matrix[sources, targets]
+
+    # set as edge attributes
+    data[virtual_edge_type].edge_demand = demand_values
+
+    return data
 
 
 # === Cleaning Builders (for cleanup after processing) ===
