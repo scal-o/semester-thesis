@@ -24,18 +24,20 @@ class AttentionLayerConfig:
         type: Layer class name (e.g., 'RealDependentAttentionLayer').
         hidden_channels: Hidden dimension for this layer.
         num_heads: Number of attention heads.
+        edge_embedding_dim: Optional edge embedding dimension (for VirtualDependentAttentionLayer).
     """
 
     type: str
     hidden_channels: int
     num_heads: int
+    edge_embedding_dim: int | None = None
 
     @classmethod
     def from_dict(cls, data: dict) -> Self:
         """Parse AttentionLayerConfig from dictionary.
 
         Args:
-            data: Dict with keys: type, hidden_channels, num_heads.
+            data: Dict with keys: type, hidden_channels, num_heads, edge_embedding_dim (optional).
 
         Returns:
             AttentionLayerConfig instance.
@@ -50,6 +52,7 @@ class AttentionLayerConfig:
             type=data["type"],
             hidden_channels=data["hidden_channels"],
             num_heads=data["num_heads"],
+            edge_embedding_dim=data.get("edge_embedding_dim"),
         )
 
     @classmethod
@@ -217,31 +220,55 @@ class RealAdaptiveWeights(nn.Module):
 
 
 class VirtualAdaptiveWeights(nn.Module):
-    """Learns adaptive attention weights for virtual OD edges."""
+    """Learns adaptive attention weights for virtual OD edges.
 
-    def __init__(self, input_dim: int, num_heads: int) -> None:
+    Supports two modes:
+    1. Node features only: concatenates origin and destination node features
+    2. With edge embeddings: concatenates node features + edge embeddings
+    """
+
+    def __init__(
+        self, input_dim: int, num_heads: int, edge_embedding_dim: int | None = None
+    ) -> None:
         super().__init__()
         self.input_dim: int = input_dim * 2
         self.num_heads: int = num_heads
+        self.edge_embedding_dim: int | None = edge_embedding_dim
+
+        # determine total feature dimension
+        if edge_embedding_dim is not None:
+            total_dim = self.input_dim + edge_embedding_dim
+        else:
+            total_dim = self.input_dim
 
         # linear module
-        layer1 = nn.Linear(self.input_dim, self.input_dim)
-        layer2 = nn.Linear(self.input_dim, self.num_heads)
+        layer1 = nn.Linear(total_dim, total_dim)
+        layer2 = nn.Linear(total_dim, self.num_heads)
         self.lin_v_edges = MLP([layer1, layer2], None)
 
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        edge_index: torch.Tensor,
+        edge_embedding: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """Compute adaptive weights based on origin/destination features.
 
         Args:
             x: Node features ``[num_nodes, input_dim]``.
             edge_index: Virtual edge connectivity ``[2, num_edges]``.
+            edge_embedding: Optional edge embeddings ``[num_edges, edge_embedding_dim]``.
 
         Returns:
             Adaptive weights ``[num_edges, num_heads]`` for each head.
         """
-
         origin, destination = edge_index
         pair_features = torch.cat([x[origin], x[destination]], dim=1)
+
+        # concatenate edge embeddings if available
+        if edge_embedding is not None:
+            pair_features = torch.cat([pair_features, edge_embedding], dim=1)
+
         return self.lin_v_edges(pair_features)
 
 
@@ -278,11 +305,16 @@ class RealDependentAttentionLayer(BaseDependentAttentionLayer):
 
 
 class VirtualDependentAttentionLayer(BaseDependentAttentionLayer):
-    """Dependent attention variant that adapts weights per virtual edge."""
+    """Dependent attention variant that adapts weights per virtual edge.
 
-    def __init__(self, input_dim: int, hidden_dim: int, num_heads: int) -> None:
+    Optionally incorporates edge embeddings if available in the data.
+    """
+
+    def __init__(
+        self, input_dim: int, hidden_dim: int, num_heads: int, edge_embedding_dim: int | None = None
+    ) -> None:
         super().__init__(input_dim, hidden_dim, num_heads)
-        self.adaptive_layer = VirtualAdaptiveWeights(input_dim, num_heads)
+        self.adaptive_layer = VirtualAdaptiveWeights(input_dim, num_heads, edge_embedding_dim)
 
     def compute_edge_weights(
         self,
@@ -293,10 +325,13 @@ class VirtualDependentAttentionLayer(BaseDependentAttentionLayer):
     ) -> torch.Tensor:
         """Use learned adaptive weights for each virtual edge.
 
+        Optionally uses edge embeddings if available in data.
+
         Args:
             x: Node features ``[num_nodes, input_dim]``.
-            edge_index: Virtual connectivity ``[2, num_edges]``.
-            **_: Ignored keyword arguments.
+            data: HeteroData object containing edge information.
+            edge_type: Edge type identifier.
+            **kwargs: Ignored keyword arguments.
 
         Returns:
             Adaptive weights ``[num_edges, num_heads]``.
@@ -304,4 +339,9 @@ class VirtualDependentAttentionLayer(BaseDependentAttentionLayer):
         validate_edge_attribute(data, edge_type, "edge_index", expected_ndim=2)
         edge_index = data[edge_type].edge_index
 
-        return self.adaptive_layer(x, edge_index)
+        # check if edge embeddings are available
+        edge_embedding = None
+        if hasattr(data[edge_type], "edge_embedding"):
+            edge_embedding = data[edge_type].edge_embedding
+
+        return self.adaptive_layer(x, edge_index, edge_embedding)

@@ -147,11 +147,22 @@ class EncoderBase(nn.Module):
                 )
 
             layer_class = cls.SUPPORTED_LAYERS[layer_type]
-            layer = layer_class(
-                in_channels,
-                layer_config.hidden_channels,
-                layer_config.num_heads,
-            )
+
+            # pass edge_embedding_dim if specified (only used by VirtualDependentAttentionLayer)
+            if layer_config.edge_embedding_dim is not None:
+                layer = layer_class(
+                    in_channels,
+                    layer_config.hidden_channels,
+                    layer_config.num_heads,
+                    layer_config.edge_embedding_dim,
+                )
+            else:
+                layer = layer_class(
+                    in_channels,
+                    layer_config.hidden_channels,
+                    layer_config.num_heads,
+                )
+
             encoder_layers.append(layer)
             in_channels = layer_config.hidden_channels
 
