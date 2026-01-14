@@ -31,12 +31,12 @@ class LossWrapper(nn.Module):
             "l2": self._l2_loss,
             "mse": self._l2_loss,
             "custom": self._custom_loss,
-            "learnable_weights": self._learnable_loss,
+            "learnable": self._learnable_loss,
         }
 
         INIT_FUNCTIONS = {
             "custom": self._init_custom_params,
-            "learnable_weights": self._init_learnable_params,
+            "learnable": self._init_learnable_params,
         }
 
         if loss_type not in VALID_LOSSES:
@@ -83,10 +83,34 @@ class LossWrapper(nn.Module):
     def _init_learnable_params(self, **kwargs) -> None:
         """
         Initializes parameters for the learnable_weights loss.
+        Initializes log_vars based on fixed weight equivalents to account for different loss scales.
         """
+        # Default weights matching the custom loss defaults
+        defaults = {"w_vcr": 1.0, "w_flow": 0.005, "w_conservation": 0.02}
+        self.weight_vars: dict[str, float] = {}
+
+        for key, default_val in defaults.items():
+            val = kwargs.get(key, None)
+            if val is None:
+                print(f"Warning: Using default weight for {key}: {default_val}")
+                val = default_val
+            self.weight_vars[key] = val
+
+        # Initialize log_vars to approximate the fixed weights
+        # For uncertainty weighting: weighted_loss = 0.5 * exp(-log_var) * loss
+        # To match fixed weight w: 0.5 * exp(-log_var) = w
+        # Therefore: log_var = -log(2*w)
+        init_values = torch.tensor(
+            [
+                -torch.log(torch.tensor(2.0 * self.weight_vars["w_vcr"])),
+                -torch.log(torch.tensor(2.0 * self.weight_vars["w_flow"])),
+                -torch.log(torch.tensor(2.0 * self.weight_vars["w_conservation"])),
+            ]
+        )
+
         # Learnable parameters for uncertainty weighting, representing log(sigma^2)
         # One for each loss component: vcr, flow, conservation
-        self.log_vars = nn.Parameter(torch.zeros(len(LOSS_COMPONENT_NAMES)))
+        self.log_vars = nn.Parameter(init_values)
 
     def _validate_custom_data(self, data: HeteroData) -> None:
         """
