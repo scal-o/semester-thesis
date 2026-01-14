@@ -6,19 +6,33 @@ generates N scenario .gpkg files using a ScenarioGenerator class.
 """
 
 from functools import partial
-from multiprocessing import Pool, cpu_count
 from pathlib import Path
-from typing import Callable, Dict, Tuple
+from typing import Callable, Dict, Optional
 
 import click
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+from scipy.stats import qmc
 from tqdm import tqdm
 
 # --- Modification Function Definitions ---
 # These functions are "strategies" and can remain at the module level.
 # -----------------------------------------------------------------
+
+
+def modify_capacity_lhs(x: pd.Series) -> pd.Series:
+    """
+    Applies a stochastic modification factor using Latin Hypercube Sampling to capacity.
+
+    Args:
+        x: A pd.Series containing the original capacity values.
+
+    Returns:
+        A pd.Series with the modified and rounded capacity values.
+    """
+    # use the default capacity LHS sampler
+    return DEFAULT_CAPACITY_LHS_SAMPLER(x)
 
 
 def modify_capacity_uniform(x: pd.Series) -> pd.Series:
@@ -64,11 +78,91 @@ def modify_od_uniform(x: pd.Series) -> pd.Series:
     return (x * factors).round(0).astype(int)
 
 
+class LatinHypercubeSampler:
+    """
+    Latin Hypercube Sampler that precomputes a matrix of weights and returns
+    a row of weights each time it is called.
+
+    Usage:
+    sampler = LatinHypercubeSampler(value_range=(0.8, 1.0), sample_size=80, num_samples=5000)
+    weights = sampler(pd.Series(...))  # returns a pd.Series with appropriate dtype
+    """
+
+    def __init__(
+        self,
+        value_range: tuple[float, float],
+        sample_size: int,
+        num_samples: int = 5000,
+    ) -> None:
+        self.low = float(value_range[0])
+        self.high = float(value_range[1])
+        self.num_samples = int(num_samples)
+        # number of columns (per-sample size)
+        self._n_rows = self.num_samples
+        self._sample_size = sample_size
+        self._matrix: Optional[np.ndarray] = None
+        self._index = 0
+        # RNG is no longer used; SciPy's qmc handles its internal RNG
+        # If a sample_size is provided, build the matrix immediately
+        if self._sample_size is not None:
+            self._build_matrix(self._sample_size)
+
+    def _build_matrix(self, sample_size: int) -> None:
+        """
+        Build an LHS matrix of shape (n_rows, sample_size).
+        The matrix is generated column-wise, shuffling each column independently.
+        """
+        n_rows = self._n_rows
+        # Each column is a LHS of size n_rows
+        mat = np.empty((n_rows, sample_size), dtype=float)
+
+        # Use SciPy's LHS generator to build the full matrix at once
+        lhs_sampler = qmc.LatinHypercube(d=sample_size)
+        u = lhs_sampler.random(n_rows)
+        # scale to [low, high] for each dimension
+        mat = qmc.scale(u, [self.low] * sample_size, [self.high] * sample_size)
+
+        self._matrix = mat
+
+    def __call__(self, x: pd.Series) -> pd.Series:
+        """Return a new vector of sampled weights multiplied with `x`.
+
+        The method will lazily initialize the internal LHS matrix if not already
+        created, using the length of `x` as the sample size.
+        It advances an internal index and returns the row at that index. The
+        index wraps around once it reaches the end of the matrix.
+        """
+        if self._matrix is None or self._sample_size != len(x):
+            # initialize or re-initialize matrix based on incoming size
+            self._build_matrix(len(x))
+
+        assert self._matrix is not None
+
+        weights = self._matrix[self._index, :]
+        self._index += 1
+        if self._index >= self._n_rows:
+            self._index = 0
+
+        # apply weights
+        result = x * weights
+        # if integer-like, round and cast
+        if pd.api.types.is_integer_dtype(x.dtype):
+            return result.round(0).astype(int)
+        return result
+
+
+# Default capacity sampler: 80 weights per scenario by default.
+# Change num_samples or sample_size here if you want a different behavior.
+DEFAULT_CAPACITY_LHS_SAMPLER = LatinHypercubeSampler(
+    value_range=(0.8, 1.0), num_samples=5000, sample_size=80
+)
+
+
 # --- Modification Rules Mapping ---
 # This dictionary "maps" attributes to their modification functions.
 # -----------------------------------------------------------------
 MODIFICATION_RULES: Dict[str, Callable[[pd.Series], pd.Series]] = {
-    "capacity": modify_capacity_uniform,
+    "capacity": modify_capacity_lhs,
     # "free_flow_time": modify_fft_normal,
     "demand": modify_od_uniform,
 }
@@ -146,7 +240,8 @@ class ScenarioGenerator:
         base_od_gdf: gpd.GeoDataFrame,
         base_flows_gdf: gpd.GeoDataFrame,
         output_dir: Path,
-    ) -> Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+        capacity_sampler: "LatinHypercubeSampler | None" = None,
+    ) -> bool:
         """
         Generates a single scenario by applying modifications to its link and demand layers.
         Static method meant to be used with multiprocessor for parallelization.
@@ -170,19 +265,30 @@ class ScenarioGenerator:
         # convert the base data to the correct format
         if scenario_seed != 0:
             # Apply modification to the od matrix
-            if "demand" in MODIFICATION_RULES:
-                mod_function = MODIFICATION_RULES.pop("demand")
+            # Use a copy of the rules to avoid mutating the global dictionary
+            rules = MODIFICATION_RULES.copy()
+            # Demand modification is handled separately
+            demand_mod_function = rules.pop("demand")
+            if demand_mod_function is not None:
                 original_series = mod_od_gdf["demand"]
-                mod_od_gdf["demand"] = mod_function(original_series)
+                mod_od_gdf["demand"] = demand_mod_function(original_series)
 
             # Apply modifications to the links
-            for attribute, mod_function in MODIFICATION_RULES.items():
+            for attribute, mod_function in rules.items():
                 if attribute not in mod_links_gdf.columns:
                     print(f"  Warning: Attribute '{attribute}' not found. Skipping.")
                     continue
 
                 original_series = mod_links_gdf[attribute]
-                mod_links_gdf[attribute] = mod_function(original_series)
+                # If we have a capacity sampler and the rule is the LHS wrapper
+                if (
+                    attribute == "capacity"
+                    and mod_function is modify_capacity_lhs
+                    and capacity_sampler is not None
+                ):
+                    mod_links_gdf[attribute] = capacity_sampler(original_series)
+                else:
+                    mod_links_gdf[attribute] = mod_function(original_series)
 
         # Save scenario files
         scenario_filename = f"scenario_{scenario_seed:05d}"
@@ -202,7 +308,7 @@ class ScenarioGenerator:
 
         return True
 
-    def run(self, n_scenarios: int, output_dir: Path, processes: int = None) -> None:
+    def run(self, n_scenarios: int, output_dir: Path) -> None:
         """
         Runs the full scenario generation process.
 
@@ -219,6 +325,20 @@ class ScenarioGenerator:
         output_dir.mkdir(parents=True, exist_ok=False)
 
         # Create a partial function to pass fixed arguments
+        # Prepare a capacity LHS sampler if capacity uses LHS modifier
+        capacity_sampler = None
+        if (
+            "capacity" in MODIFICATION_RULES
+            and MODIFICATION_RULES["capacity"] is modify_capacity_lhs
+        ):
+            # `num_samples` must match the number of scenarios to be generated.
+            # We include `scenario_00000` as well, so use n_scenarios + 1.
+            capacity_sampler = LatinHypercubeSampler(
+                value_range=(0.5, 1.0),
+                sample_size=len(self.base_links_gdf),
+                num_samples=(n_scenarios + 1),
+            )
+
         worker_func = partial(
             ScenarioGenerator._generate_single_scenario,
             base_nodes_gdf=self.base_nodes_gdf,
@@ -226,23 +346,19 @@ class ScenarioGenerator:
             base_od_gdf=self.base_od_gdf,
             base_flows_gdf=self.base_flows_gdf,
             output_dir=output_dir,
+            capacity_sampler=capacity_sampler,
         )
 
         # Generate scenario IDs
         scenario_ids = range(0, n_scenarios + 1)
 
-        # Create a process pool
-        if processes is None:
-            processes = cpu_count()
+        # Run sequentially (no multiprocessing)
 
-        with Pool(processes=processes) as pool:
-            results = list(
-                tqdm(
-                    pool.imap_unordered(worker_func, scenario_ids),
-                    total=n_scenarios,
-                    desc="Generating Scenarios",
-                )
-            )
+        results = []
+        total = len(list(scenario_ids))
+        for scenario_id in tqdm(scenario_ids, total=total, desc="Generating Scenarios"):
+            result = worker_func(scenario_id)
+            results.append(result)
 
         print("--- Scenario Generation Complete ---")
         print(f"Successfylly wrote {len(results)} scenarios to {output_dir}")
@@ -273,19 +389,11 @@ class ScenarioGenerator:
     show_default=True,
     help="Number of scenarios to generate.",
 )
-@click.option(
-    "-p",
-    "--processes",
-    type=int,
-    default=None,
-    help="Number of parallel processes to use. Defaults to number of CPU cores.",
-)
 def generate_scenarios(
     network: str,
-    path: str = None,
-    output: str = None,
+    path: Optional[str] = None,
+    output: Optional[str] = None,
     n_scenarios: int = 5000,
-    processes: int = None,
 ):
     """
     Generates N stochastic scenarios from a NETWORK's master GeoPackage file.
@@ -301,16 +409,16 @@ def generate_scenarios(
 
     # setting up paths
     if path is None:
-        path = Path.cwd()
+        path_path = Path.cwd()
     else:
-        path = Path(path)
+        path_path = Path(path)
 
-    network_path = path / network
+    network_path = path_path / network
 
     if output is None:
         output_path = Path.cwd() / "data" / network / "scenarios_geojson"
     else:
-        output_path = Path(output) / network / "scenarios_geojson"
+        output_path = Path(output) / "scenarios_geojson"
 
     if not network_path.is_dir():
         raise ValueError(
@@ -326,10 +434,10 @@ def generate_scenarios(
 
     try:
         # 1. Initialize the generator (this loads the data)
-        generator = ScenarioGenerator(network, path)
+        generator = ScenarioGenerator(network, path_path)
 
         # 2. Run the generation process
-        generator.run(n_scenarios, output_path, processes)
+        generator.run(n_scenarios, output_path)
 
     except Exception as e:
         raise Exception(f"Scenario generation failed. An unexpected error occurred: {e}") from e
