@@ -81,7 +81,7 @@ class SchedulerConfig:
 
     # ReduceLROnPlateau parameters
     factor: float = 0.5
-    patience: int = 20
+    patience: int = 30
 
     # OneCycleLR parameters
     max_lr: float = 0.01
