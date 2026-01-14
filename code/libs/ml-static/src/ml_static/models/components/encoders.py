@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from typing import Any, Literal, Self
+from dataclasses import dataclass
+from typing import Literal, Self
 
 import torch
 import torch.nn as nn
 from torch_geometric.data import HeteroData
 
+from ml_static.models.base import BaseConfig
 from ml_static.models.components import (
     AttentionLayerConfig,
     RealDependentAttentionLayer,
@@ -19,7 +20,7 @@ from ml_static.models.components import (
 
 
 @dataclass(frozen=True)
-class EncoderConfig:
+class EncoderConfig(BaseConfig):
     """Configuration for a graph encoder.
 
     Attributes:
@@ -34,18 +35,7 @@ class EncoderConfig:
 
     @classmethod
     def from_dict(cls, data: dict) -> Self:
-        """Parse EncoderConfig from dictionary.
-
-        Args:
-            data: Dict with keys: type, input_channels, layers.
-
-        Returns:
-            EncoderConfig instance.
-
-        Raises:
-            KeyError: If required keys are missing.
-            ValueError: If values are invalid.
-        """
+        """Parse EncoderConfig from dictionary."""
         cls._validate_dict(data)
 
         # Parse layers
@@ -57,25 +47,6 @@ class EncoderConfig:
             input_channels=data["input_channels"],
             layers=layers,
         )
-
-    @classmethod
-    def _validate_dict(cls, data: dict) -> None:
-        """Validate that required keys are present in dict.
-
-        Args:
-            data: Dictionary to validate.
-
-        Raises:
-            KeyError: If required keys are missing.
-        """
-        required = {"type", "input_channels", "layers"}
-        missing = required - set(data.keys())
-        if missing:
-            raise KeyError(f"Missing required keys in encoder config: {missing}")
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert config to dict for backward compatibility."""
-        return asdict(self)
 
     def validate(self) -> None:
         """Validate encoder configuration."""

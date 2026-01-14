@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Any, Callable, Self
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from ml_static.models.base import BaseConfig
 
 # =============================================================================
 # Configuration for Linear Layers
@@ -13,7 +15,7 @@ import torch.nn.functional as F
 
 
 @dataclass(frozen=True)
-class LinearLayerConfig:
+class LinearLayerConfig(BaseConfig):
     """Configuration for a linear layer in MLP.
 
     Attributes:
@@ -21,45 +23,6 @@ class LinearLayerConfig:
     """
 
     hidden_channels: int
-
-    @classmethod
-    def from_dict(cls, data: dict) -> Self:
-        """Parse LinearLayerConfig from dictionary.
-
-        Args:
-            data: Dict with key: hidden_channels.
-
-        Returns:
-            LinearLayerConfig instance.
-
-        Raises:
-            KeyError: If required keys are missing.
-            ValueError: If values are invalid.
-        """
-        cls._validate_dict(data)
-
-        return cls(
-            hidden_channels=data["hidden_channels"],
-        )
-
-    @classmethod
-    def _validate_dict(cls, data: dict) -> None:
-        """Validate that required keys are present in dict.
-
-        Args:
-            data: Dictionary to validate.
-
-        Raises:
-            KeyError: If required keys are missing.
-        """
-        required = {"hidden_channels"}
-        missing = required - set(data.keys())
-        if missing:
-            raise KeyError(f"Missing required keys in linear layer config: {missing}")
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert config to dict for backward compatibility."""
-        return asdict(self)
 
     def validate(self) -> None:
         """Validate layer configuration."""
@@ -73,7 +36,7 @@ class LinearLayerConfig:
 
 
 @dataclass(frozen=True)
-class MLPConfig:
+class MLPConfig(BaseConfig):
     """Configuration for general MLP.
 
     Attributes:
@@ -90,53 +53,29 @@ class MLPConfig:
 
     @classmethod
     def from_dict(cls, data: dict) -> Self:
-        """Parse MLPConfig from dictionary.
-
-        Args:
-            data: Dict with keys: input_channels, output_channels, layers.
-
-        Returns:
-            MLPConfig instance.
-
-        Raises:
-            KeyError: If required keys are missing.
-            ValueError: If values are invalid.
-        """
+        """Parse MLPConfig from dictionary."""
         cls._validate_dict(data)
 
         # Parse layers
-        layers = [LinearLayerConfig.from_dict(d) for d in data["layers"]]
-        layers = tuple(layers)
+        layers_data = data.get("layers", [])
+        layers = [LinearLayerConfig.from_dict(d) for d in layers_data]
 
-        return cls(
-            input_channels=data["input_channels"],
-            output_channels=data["output_channels"],
-            activation=data.get("activation", None),
-            layers=layers,
-        )
+        # Create a new dict for instantiation to avoid modifying input
+        init_data = data.copy()
+        init_data["layers"] = tuple(layers)
+
+        return cls(**init_data)
 
     @classmethod
     def _validate_dict(cls, data: dict) -> None:
-        """Validate that required keys are present in dict.
-
-        Args:
-            data: Dictionary to validate.
-
-        Raises:
-            KeyError: If required keys are missing.
+        """
+        Validate that required keys are present in dict.
+        Overrides BaseConfig because 'layers' and 'activation' are optional/have defaults logic.
         """
         required = {"input_channels", "output_channels"}
         missing = required - set(data.keys())
         if missing:
             raise KeyError(f"Missing required keys in MLP config: {missing}")
-
-        # layers is optional, default to empty list if not provided
-        if "layers" not in data:
-            data["layers"] = []
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert config to dict for backward compatibility."""
-        return asdict(self)
 
     def validate(self) -> None:
         """Validate predictor configuration."""

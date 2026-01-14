@@ -5,12 +5,13 @@ from dataclasses import dataclass
 import torch
 from torch_geometric.data import HeteroData
 
+from ml_static.models.base import BaseConfig
 from ml_static.models.components.mlp import MLP, MLPConfig
 from ml_static.utils import validate_node_attribute
 
 
 @dataclass(frozen=True)
-class PreprocessorConfig(MLPConfig):
+class PreprocessorConfig(MLPConfig, BaseConfig):
     """Configuration for node features preprocessor.
 
     Attributes:

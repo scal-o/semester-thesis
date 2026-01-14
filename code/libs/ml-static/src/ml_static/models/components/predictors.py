@@ -6,12 +6,13 @@ from typing import Self
 import torch
 from torch_geometric.data import HeteroData
 
+from ml_static.models.base import BaseConfig
 from ml_static.models.components.mlp import MLP, MLPConfig
 from ml_static.utils import validate_edge_attribute
 
 
 @dataclass(frozen=True)
-class PredictorConfig(MLPConfig):
+class PredictorConfig(MLPConfig, BaseConfig):
     """Configuration for edge predictor.
 
     Attributes:
@@ -23,44 +24,28 @@ class PredictorConfig(MLPConfig):
 
     @classmethod
     def from_dict(cls, data: dict) -> Self:
-        """Parse PredictorConfig from dictionary.
-
-        Args:
-            data: Dict with keys: output_channels, node_feature_dim,
-                  edge_feature_dim, layers.
-
-        Returns:
-            PredictorConfig instance.
-
-        Raises:
-            KeyError: If required keys are missing.
-            ValueError: If values are invalid.
-        """
+        """Parse PredictorConfig from dictionary."""
         cls._validate_dict(data)
 
+        # Work on a copy to avoid side effects
+        data = data.copy()
+
+        # Calculate input channels dynamically from component dims
         input_channels = data["node_feature_dim"] * 2 + data["edge_feature_dim"]
         data["input_channels"] = input_channels
 
+        # Delegate to MLPConfig's parsing logic
+        # This works because PredictorConfig inherits all fields from MLPConfig
+        # and MLPConfig.from_dict uses 'cls' to instantiate.
         return super().from_dict(data)
 
     @classmethod
     def _validate_dict(cls, data: dict) -> None:
-        """Validate that required keys are present in dict.
-
-        Args:
-            data: Dictionary to validate.
-
-        Raises:
-            KeyError: If required keys are missing.
-        """
+        """Validate that required keys are present in dict."""
         required = {"output_channels", "node_feature_dim", "edge_feature_dim"}
         missing = required - set(data.keys())
         if missing:
             raise KeyError(f"Missing required keys in predictor config: {missing}")
-
-        # layers is optional, default to empty tuple if not provided
-        if "layers" not in data:
-            data["layers"] = []
 
 
 # =============================================================================
