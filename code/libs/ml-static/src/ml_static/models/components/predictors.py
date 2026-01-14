@@ -53,10 +53,14 @@ class PredictorConfig(MLPConfig):
         Raises:
             KeyError: If required keys are missing.
         """
-        required = {"output_channels", "node_feature_dim", "edge_feature_dim", "layers"}
+        required = {"output_channels", "node_feature_dim", "edge_feature_dim"}
         missing = required - set(data.keys())
         if missing:
             raise KeyError(f"Missing required keys in predictor config: {missing}")
+
+        # layers is optional, default to empty tuple if not provided
+        if "layers" not in data:
+            data["layers"] = []
 
 
 # =============================================================================

@@ -125,10 +125,14 @@ class MLPConfig:
         Raises:
             KeyError: If required keys are missing.
         """
-        required = {"input_channels", "output_channels", "layers"}
+        required = {"input_channels", "output_channels"}
         missing = required - set(data.keys())
         if missing:
-            raise KeyError(f"Missing required keys in predictor config: {missing}")
+            raise KeyError(f"Missing required keys in MLP config: {missing}")
+
+        # layers is optional, default to empty list if not provided
+        if "layers" not in data:
+            data["layers"] = []
 
     def to_dict(self) -> dict[str, Any]:
         """Convert config to dict for backward compatibility."""
@@ -140,8 +144,6 @@ class MLPConfig:
             raise ValueError(f"input_channels must be >= 1, got {self.input_channels}")
         if self.output_channels < 1:
             raise ValueError(f"output_channels must be >= 1, got {self.output_channels}")
-        if not self.layers:
-            raise ValueError("Predictor must contain at least one hidden layer")
 
 
 class MLP(nn.Module):
@@ -154,17 +156,18 @@ class MLP(nn.Module):
     VALID_ACTIVATIONS = {
         "relu": F.relu,
         "leaky_relu": F.leaky_relu,
+        "softplus": F.softplus,
         "sigmoid": torch.sigmoid,
         "tanh": torch.tanh,
         None: lambda x: x,
     }
 
     def __init__(self, layers: list[nn.Module], final_activation: str | None) -> None:
-        """Initialize edge predictor with a list of linear layers.
+        """Initialize MLP with a list of linear layers.
 
         Args:
-            layers: List of nn.Linear layers for the prediction stack.
-            final_activation: Callable activation function for the final layer.
+            layers: List of nn.Linear layers for the MLP stack.
+            final_activation: Activation function name for the final layer.
         """
         super().__init__()
         self.layers = nn.ModuleList(layers)
