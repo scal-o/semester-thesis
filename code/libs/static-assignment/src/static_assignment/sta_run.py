@@ -2,6 +2,7 @@ import io
 import logging
 from contextlib import redirect_stderr
 from functools import partial
+from multiprocessing import Pool
 from pathlib import Path
 
 import click
@@ -16,10 +17,7 @@ from tqdm import tqdm
 logger = logging.getLogger("aequilibrae")
 logger.setLevel(logging.ERROR)
 
-CENTROID_FLOW_BLOCKING = {
-    "anaheim": True,
-    "sioux_falls": False,
-}
+CENTROID_FLOW_BLOCKING = {"anaheim": True, "sioux_falls": False, "chicago": False}
 
 
 def find_centroids(scenario_path: Path):
@@ -205,6 +203,15 @@ def run_sta(
     scenarios_path = path / network
     output_path = scenarios_path / "scenarios_sta_results"
 
+    if "sioux_falls" in network:
+        network = "sioux_falls"
+    elif "anaheim" in network:
+        network = "anaheim"
+    elif "chicago" in network:
+        network = "chicago"
+    else:
+        network = None
+
     # check paths
     if not scenarios_path.is_dir():
         raise ValueError(
@@ -240,19 +247,21 @@ def run_sta(
     worker_func = partial(
         run_assignment,
         scenarios_dir=scenarios_path,
-        block_centroid_flows=CENTROID_FLOW_BLOCKING[network],
+        block_centroid_flows=CENTROID_FLOW_BLOCKING.get(network, False),
     )
 
-    # run simulation
-    results = [False] * len(scenario_names)
-    i = 0
-    for scenario in tqdm(
-        scenario_names,
-        total=len(scenario_names),
-        desc="Running STA & Writing results",
-    ):
-        results[i] = worker_func(scenario)
-        i += 1
+    # run simulation in parallel with max 10 processes
+    num_processes = min(11, len(scenario_names))
+    print(f"Using {num_processes} parallel processes...")
+
+    with Pool(processes=num_processes) as pool:
+        results = list(
+            tqdm(
+                pool.imap(worker_func, scenario_names),
+                total=len(scenario_names),
+                desc="Running STA & Writing results",
+            )
+        )
 
     print("--- Assignment Complete ---")
     success_count = sum(1 for res in results if res)

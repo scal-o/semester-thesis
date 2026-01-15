@@ -6,6 +6,7 @@ generates N scenario .gpkg files using a ScenarioGenerator class.
 """
 
 from functools import partial
+from multiprocessing import Pool
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
@@ -308,7 +309,7 @@ class ScenarioGenerator:
 
         return True
 
-    def run(self, n_scenarios: int, output_dir: Path) -> None:
+    def run(self, n_scenarios: int, output_dir: Path, multiprocess: bool = False) -> None:
         """
         Runs the full scenario generation process.
 
@@ -318,6 +319,7 @@ class ScenarioGenerator:
         Args:
             n_scenarios: The total number of scenarios to generate.
             output_dir: The directory to save the .gpkg files.
+            multiprocess: Whether to use multiprocessing for parallel execution (max 10 processes).
         """
         print(f"\nStarting generation of {n_scenarios} scenarios...")
         print(f"Modification rules: {list(MODIFICATION_RULES.keys())}")
@@ -350,18 +352,30 @@ class ScenarioGenerator:
         )
 
         # Generate scenario IDs
-        scenario_ids = range(0, n_scenarios + 1)
+        scenario_ids = list(range(0, n_scenarios + 1))
 
-        # Run sequentially (no multiprocessing)
+        # Run with or without multiprocessing
+        if multiprocess:
+            num_processes = min(11, len(scenario_ids))
+            print(f"Using {num_processes} parallel processes...")
 
-        results = []
-        total = len(list(scenario_ids))
-        for scenario_id in tqdm(scenario_ids, total=total, desc="Generating Scenarios"):
-            result = worker_func(scenario_id)
-            results.append(result)
+            with Pool(processes=num_processes) as pool:
+                results = list(
+                    tqdm(
+                        pool.imap(worker_func, scenario_ids),
+                        total=len(scenario_ids),
+                        desc="Generating Scenarios",
+                    )
+                )
+        else:
+            print("Running sequentially (single process)...")
+            results = []
+            for scenario_id in tqdm(scenario_ids, total=len(scenario_ids), desc="Generating Scenarios"):
+                result = worker_func(scenario_id)
+                results.append(result)
 
         print("--- Scenario Generation Complete ---")
-        print(f"Successfylly wrote {len(results)} scenarios to {output_dir}")
+        print(f"Successfully wrote {len(results)} scenarios to {output_dir}")
 
 
 # --- CLI Definition ---
@@ -389,11 +403,20 @@ class ScenarioGenerator:
     show_default=True,
     help="Number of scenarios to generate.",
 )
+@click.option(
+    "--multiprocess",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="Use multiprocessing for parallel scenario generation.",
+)
+
 def generate_scenarios(
     network: str,
     path: Optional[str] = None,
     output: Optional[str] = None,
     n_scenarios: int = 5000,
+    multiprocess: bool = False,
 ):
     """
     Generates N stochastic scenarios from a NETWORK's master GeoPackage file.
@@ -406,6 +429,7 @@ def generate_scenarios(
     print(f"Network: {network}")
     print(f"Base path: {path}")
     print(f"Output directory: {output}")
+    print(f"Multiprocessing: {multiprocess}")
 
     # setting up paths
     if path is None:
@@ -437,7 +461,7 @@ def generate_scenarios(
         generator = ScenarioGenerator(network, path_path)
 
         # 2. Run the generation process
-        generator.run(n_scenarios, output_path)
+        generator.run(n_scenarios, output_path, multiprocess)
 
     except Exception as e:
         raise Exception(f"Scenario generation failed. An unexpected error occurred: {e}") from e
