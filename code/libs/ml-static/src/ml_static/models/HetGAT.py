@@ -147,11 +147,12 @@ class HetGAT(BaseGNNModel):
 
     def forward(self, graph: HeteroData) -> torch.Tensor:
         """Forward pass."""
-        # 0. Validate Input
-        self._validate_input(graph)
 
-        # 1. Initialize Node Features
+        # 0. Initialize Node Features
         g = self.node_initializer(graph)
+
+        # 1. Validate Input
+        self._validate_input(graph)
 
         # 2. Apply Encoders
         for encoder in self.encoders:

@@ -48,8 +48,8 @@ class MLPConfig(BaseConfig):
 
     input_channels: int
     output_channels: int
-    activation: str | None
     layers: tuple[LinearLayerConfig, ...]
+    activation: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict) -> Self:

@@ -31,7 +31,7 @@ class PredictorConfig(MLPConfig, BaseConfig):
         data = data.copy()
 
         # Calculate input channels dynamically from component dims
-        input_channels = data["node_feature_dim"] * 2 + data["edge_feature_dim"]
+        input_channels = data.pop("node_feature_dim") * 2 + data.pop("edge_feature_dim")
         data["input_channels"] = input_channels
 
         # Delegate to MLPConfig's parsing logic
@@ -42,7 +42,21 @@ class PredictorConfig(MLPConfig, BaseConfig):
     @classmethod
     def _validate_dict(cls, data: dict) -> None:
         """Validate that required keys are present in dict."""
-        required = {"output_channels", "node_feature_dim", "edge_feature_dim"}
+
+        print(data)
+
+        # node_feature_dim and edge_feature_dim can be absent if input_channels is specified
+        if "input_channels" in data:
+            if "node_feature_dim" in data or "edge_feature_dim" in data:
+                raise KeyError(
+                    "Error in predictor config: "
+                    "either input_channels or [node_, edge_]feature_dim must be specified."
+                )
+
+            required = {"output_channels"}
+        else:
+            required = {"output_channels", "node_feature_dim", "edge_feature_dim"}
+
         missing = required - set(data.keys())
         if missing:
             raise KeyError(f"Missing required keys in predictor config: {missing}")

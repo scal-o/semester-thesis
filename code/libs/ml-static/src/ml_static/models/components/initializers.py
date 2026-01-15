@@ -43,7 +43,7 @@ class NodeInitializerConfig(BaseConfig):
     - 'demand': Aggregate virtual edges (OD demand) and preprocess.
     """
 
-    type: Literal["raw", "preprocessed", "demand"] = "raw"
+    type: Literal["raw", "preprocessed", "from_demand"] = "raw"
     preprocessor: PreprocessorConfig | None = None
     edge_processor: LinearEdgeProcessorConfig | RbfEdgeProcessorConfig | None = None
 
@@ -147,5 +147,7 @@ class NodeFeaturesInitializer(nn.Module):
                 edge_processor = RbfEdgeProcessor.from_config(config.edge_processor)
             else:
                 raise ValueError(f"Unknown edge processor config: {type(config.edge_processor)}")
+
+            preprocessor = NodePreprocessor.from_config(config.preprocessor)
 
         return cls(preprocessor=preprocessor, edge_processor=edge_processor)
