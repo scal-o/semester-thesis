@@ -21,6 +21,7 @@ dependencies = [
 [project.scripts]
 create-dataset = "ml_static.data:create_dataset"
 train = "ml_static.run:train_model"
+batch-train = "ml_static.batch_runner:batch_train"
 
 [build-system]
 requires = ["uv_build>=0.9.7,<0.10.0"]

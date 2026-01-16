@@ -1,0 +1,129 @@
+# # Example experiment suite for batch training
+# # This file defines multiple experiments that will be run sequentially
+# # Each experiment updates conf_run.yaml before training, then restores it afterward
+
+experiments:
+    - name: "chicago_linear_init_vcr"
+      description: "HetGAT model with custom node initialisation based on linear expansion - vcr mse"
+      updates:
+          model.name: "linear_init"
+          loss.type: "mse"
+
+    - name: "chicago_linear_init_vcr_flow"
+      description: "HetGAT model with custom node initialisation based on linear expansion - vcr + flow"
+      updates:
+          model.name: "linear_init"
+
+    - name: "chicago_rbf_learnable_vcr"
+      description: "HetGAT model with custom node initialisation based on rbf with learnable sigma - vcr mse"
+      updates:
+          model.name: "rbf_init"
+          loss.type: "mse"
+          model.architecture.node_initialization.edge_processor.learnable_sigma: true
+
+    - name: "chicago_rbf_learnable_vcr_flow"
+      description: "HetGAT model with custom node initialisation based on rbf with learnable sigma - vcr + flow"
+      updates:
+          model.name: "rbf_init"
+          model.architecture.node_initialization.edge_processor.learnable_sigma: true
+
+    - name: "chicago_rbf_fixed_vcr"
+      description: "HetGAT model with custom node initialisation based on rbf with fixed sigma - vcr mse"
+      updates:
+          model.name: "rbf_init"
+          loss.type: "mse"
+          model.architecture.node_initialization.edge_processor.learnable_sigma: false
+
+    - name: "chicago_rbf_fixed_vcr_flow"
+      description: "HetGAT model with custom node initialisation based on rbf with fixed sigma - vcr + flow"
+      updates:
+          model.name: "rbf_init"
+          model.architecture.node_initialization.edge_processor.learnable_sigma: false
+
+    - name: "chicago_preproc_vcr"
+      description: "HetGAT model with preprocessed node features - vcr mse"
+      updates:
+          model.name: "chicago_preproc"
+          loss.type: "mse"
+
+    - name: "chicago_preproc_vcr_flow"
+      description: "HetGAT model with preprocessed node features - vcr + flow loss"
+      updates:
+          model.name: "chicago_preproc"
+
+    # - name: "anaheim_linear_vcr"
+    #   description: "HetGAT model with custom node features initialization - vcr mse"
+    #   updates:
+    #     model.name: "linear_anaheim"
+    #     dataset.name: "anaheim_LM_lhs"
+    #     training.seed: 42
+
+    # - name: "anaheim_rbf_vcr"
+    #   description: "HetGAT model with custom node features initialization - vcr mse"
+    #   updates:
+    #     model.name: "rbf_learnable_anaheim"
+    #     dataset.name: "anaheim_LM_lhs"
+    #     training.target.pre:
+    #       - builder: "target_vcr"
+    #     training.target.post:
+    #       - scaler:
+    #           target: "y"
+    #           transform: minmax
+    #           factor: 1
+    #     training.seed: 42
+    #     loss.type: "mse"
+
+    # - name: "anaheim_rbf_vcr"
+    #   description: "HetGAT model with custom node features initialization - vcr mse"
+    #   updates:
+    #       model.name: "rbf_learnable_anaheim"
+    #       dataset.name: "anaheim_LM_lhs"
+    #       training.target.pre:
+    #           - builder: "target_vcr"
+    #       training.target.post:
+    #           - scaler:
+    #                 type: ["nodes"]
+    #                 feature: "coords"
+    #                 transform: "minmax"
+    #                 factor: 1
+    #           - scaler:
+    #                 target: "y"
+    #                 transform: minmax
+    #                 factor: 1
+    #       training.seed: 42
+    #       loss.type: "mse"
+
+    # - name: "anaheim_rbf_vcr"
+    #   description: "HetGAT model with custom node features initialization - vcr mse"
+    #   updates:
+    #       model.name: "rbf_anaheim"
+    #       dataset.name: "anaheim_LM_lhs"
+    #       training.target.pre:
+    #           - builder: "target_vcr"
+    #       training.target.post:
+    #           - scaler:
+    #                 target: "y"
+    #                 transform: minmax
+    #                 factor: 1
+    #       training.seed: 42
+    #       loss.type: "mse"
+
+    # - name: "anaheim_rbf_vcr"
+    #   description: "HetGAT model with custom node features initialization - vcr mse"
+    #   updates:
+    #       model.name: "rbf_anaheim"
+    #       dataset.name: "anaheim_LM_lhs"
+    #       training.target.pre:
+    #           - builder: "target_vcr"
+    #       training.target.post:
+    #           - scaler:
+    #                 type: ["nodes"]
+    #                 feature: "coords"
+    #                 transform: "minmax"
+    #                 factor: 1
+    #           - scaler:
+    #                 target: "y"
+    #                 transform: minmax
+    #                 factor: 1
+    #       training.seed: 42
+    #       loss.type: "mse"

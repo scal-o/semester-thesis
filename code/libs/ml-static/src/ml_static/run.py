@@ -40,17 +40,23 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
     pg.seed_everything(seed)
 
     # create dataset splits with transforms from config
-    dataset_split = DatasetSplit.from_config(config, force_reload=False)
+    dataset_split = DatasetSplit.from_config(config)
 
     # create dataloaders
     train_loader = DataLoader(
-        dataset_split["train"], batch_size=config.training.batch_size, shuffle=True
+        dataset_split["train"],
+        batch_size=config.training.batch_size,
+        shuffle=True,
     )
     val_loader = DataLoader(
-        dataset_split["val"], batch_size=len(dataset_split["val"]), shuffle=False
+        dataset_split["val"],
+        batch_size=config.training.batch_size,
+        shuffle=False,
     )
     test_loader = DataLoader(
-        dataset_split["test"], batch_size=len(dataset_split["test"]), shuffle=False
+        dataset_split["test"],
+        batch_size=config.training.batch_size,
+        shuffle=False,
     )
 
     data_sample = next(iter(train_loader))
