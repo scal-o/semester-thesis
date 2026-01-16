@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import geopandas as gpd
 import matplotlib.pyplot as plt
@@ -13,7 +13,7 @@ from sklearn.metrics import mean_squared_error, r2_score
 from torch_geometric.loader import DataLoader
 
 if TYPE_CHECKING:
-    from ml_static.data import STADataset
+    from ml_static.data import DatasetSplit, STADataset
 
 
 ## ==============================
@@ -34,6 +34,8 @@ def compute_predictions(
 
     Returns:
         A pandas DataFrame with detailed prediction results in original scale (flows).
+        If the dataset contains edge capacity values, they will be included as the column
+        `edge_capacity` in the returned DataFrame.
     """
 
     # fail if dataset does not have transform attribute
@@ -47,19 +49,24 @@ def compute_predictions(
     # check target variable from the first sample
     sample = dataset[0]
     if not hasattr(sample, "target_var"):
-        raise ValueError("No 'target_var' attribute found in the dataset samples.")
+        raise ValueError(
+            "No 'target_var' attribute found in the dataset samples."
+        )
     target_var = getattr(sample, "target_var")
 
     # create dataloader for efficient batch processing
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=False)
+    dataloader = DataLoader(dataset, batch_size=12, shuffle=False)
 
     all_predictions = []
     all_true_values = []
     all_capacities = []
+    all_free_flow_time = []
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     model.eval()
+
+    link_number = len(sample.y)
 
     with torch.no_grad():
         for data in dataloader:
@@ -72,32 +79,32 @@ def compute_predictions(
             all_predictions.append(predictions.cpu())
             all_true_values.append(true_values.cpu())
 
-            if target_var == "vcr":
-                # extract raw capacity for conversion to flow
-                # assumes edge_capacity is present in the graph
-                try:
-                    capacity = data["_raw"].edge_capacity
-                    all_capacities.append(capacity.cpu())
-                except AttributeError:
-                    raise AttributeError(
-                        "Target is VCR but 'edge_capacity' not found in graph. "
-                        "Check dataset builders."
-                    )
+            # attempt to extract raw capacity for inclusion; required for VCR -> Flow conversions
+            capacity = data["_raw"].edge_capacity
+            all_capacities.append(capacity.cpu())
+
+            free_flow_time = data["_raw"].edge_free_flow_time
+            all_free_flow_time.append(free_flow_time.cpu())
 
     # flatten the lists of arrays into single tensors
     all_predictions = torch.cat(all_predictions)
     all_true_values = torch.cat(all_true_values)
+    all_capacities = torch.cat(all_capacities)
+    all_free_flow_time = torch.cat(all_free_flow_time)
 
     # apply inverse transform
-    all_true_values = transform.inverse_transform(all_true_values, feature="target")
-    all_predictions = transform.inverse_transform(all_predictions, feature="target")
+    all_true_values = transform.inverse_transform(
+        all_true_values, feature="target"
+    )
+    all_predictions = transform.inverse_transform(
+        all_predictions, feature="target"
+    )
     # ensure non-negativity of predictions (physical constraint)
     all_predictions = F.relu(all_predictions)
 
     # convert VCR to Flow if needed
-    if target_var == "vcr":
-        all_capacities = torch.cat(all_capacities)
 
+    if target_var == "vcr":
         # ensure shapes match
         if not (all_predictions.shape == all_capacities.shape):
             raise ValueError(
@@ -111,9 +118,22 @@ def compute_predictions(
     # convert to numpy
     all_predictions = all_predictions.numpy()
     all_true_values = all_true_values.numpy()
+    all_capacities = all_capacities.numpy()
+    all_free_flow_time = all_free_flow_time.numpy()
 
+    links = np.concat(
+        np.repeat(np.arange(link_number).reshape(1, -1), len(dataset), axis=0)
+    )
     # create a DataFrame
-    df = pd.DataFrame({"true_value": all_true_values, "prediction": all_predictions})
+    df = pd.DataFrame(
+        {
+            "true_value": all_true_values,
+            "prediction": all_predictions,
+            "capacity": all_capacities,
+            "free_flow_time": all_free_flow_time,
+            "link_id": links,
+        }
+    )
 
     return df
 
@@ -130,7 +150,7 @@ def compute_errors(df: pd.DataFrame) -> pd.DataFrame:
     """
 
     # calculate error columns
-    df["error"] = df["prediction"] - df["true_value"]
+    df["error"] = df["true_value"] - df["prediction"]
     df["absolute_error"] = df["error"].abs()
     df["percentage_error"] = (df["error"] / df["true_value"]) * 100
     df["absolute_percentage_error"] = df["percentage_error"].abs()
@@ -160,14 +180,18 @@ def compute_statistics(pred_df: pd.DataFrame) -> pd.DataFrame:
     """
     # calculate metrics
     mae = pred_df["absolute_error"].mean()
-    rmse = np.sqrt(mean_squared_error(pred_df["true_value"], pred_df["prediction"]))
+    rmse = np.sqrt(
+        mean_squared_error(pred_df["true_value"], pred_df["prediction"])
+    )
     r2 = r2_score(pred_df["true_value"], pred_df["prediction"])
     mape = pred_df["absolute_percentage_error"].mean()
     mdape = pred_df["absolute_percentage_error"].median()
     error_std = pred_df["error"].std()
 
     # wMAPE: sum(|error|) / sum(true_value)
-    wmape = (pred_df["absolute_error"].sum() / pred_df["true_value"].sum()) * 100
+    wmape = (
+        pred_df["absolute_error"].sum() / pred_df["true_value"].sum()
+    ) * 100
 
     # GEH statistics
     mean_geh = pred_df["geh"].mean()
@@ -209,7 +233,14 @@ def compute_statistics(pred_df: pd.DataFrame) -> pd.DataFrame:
 ## ===============================
 ## ===== plotting functions ======
 ## ===============================
-def plot_performance_diagnostics(pred_df: pd.DataFrame, dataset_name: str):
+def plot_performance_diagnostics(
+    pred_df: pd.DataFrame,
+    dataset_name: str,
+    color_by: Optional[str] = None,
+    bins: int = 4,
+    cmap: str = "viridis",
+    binning: str = "quantile",
+) -> plt.Figure:
     """
     Generates and returns a 1x3 grid of diagnostic plots for model performance:
     - Error Distribution Histogram
@@ -219,6 +250,16 @@ def plot_performance_diagnostics(pred_df: pd.DataFrame, dataset_name: str):
     Args:
         pred_df: DataFrame generated by generate_prediction_df.
         dataset_name: The name of the dataset split (e.g., "Test").
+        color_by: Which column to color points by. Supported values:
+            - "edge_capacity" or "capacity": color points by link capacity (if present)
+            - "true_value", "true_flow": color points by the true flow
+            - "prediction", "predicted_flow": color points by the predicted flow
+            - None or "none": do not color (default: "edge_capacity")
+        bins: Number of bins to split the color values into (quartiles if 4).
+        binning: Bin selection method; either "quantile" (default) or "fixed".
+            - "quantile": uses pd.qcut (equal-frequency bins)
+            - "fixed": uses fixed-width bins computed from [min, max] of the color series
+        cmap: Matplotlib colormap name used for discrete coloring.
 
     Returns:
         The matplotlib Figure object containing the plots.
@@ -249,8 +290,122 @@ def plot_performance_diagnostics(pred_df: pd.DataFrame, dataset_name: str):
     )
 
     # 2. Actual vs. Predicted
+    # ensure we have residuals & error columns
+    if "error" not in pred_df.columns:
+        pred_df = compute_errors(pred_df.copy())
+
     r2 = r2_score(pred_df["true_value"], pred_df["prediction"])
-    axes[1].scatter(pred_df["true_value"], pred_df["prediction"], alpha=0.5)
+
+    # handle no-color option
+    if color_by is None or str(color_by).lower() in ("none", "no"):
+        color_series = None
+    else:
+        if color_by not in pred_df.columns:
+            raise ValueError(
+                f"Selected color_by column '{color_by}' not found in DataFrame columns: {pred_df.columns.tolist()}"
+            )
+        color_series = pred_df[color_by]
+
+    def _make_binned_series(
+        series: pd.Series, n_bins: int, method: str = "quantile"
+    ):
+        """
+        Create binned series and human-readable labels.
+
+        Args:
+            series: Numeric pandas Series to bin.
+            n_bins: Number of bins.
+            method: 'quantile' for equal-frequency, 'fixed' for equal-width bins.
+
+        Returns:
+            (binned_series (int labels), labels (list of (min, max) tuples))
+        """
+        # sanitize series
+        s = series.dropna()
+        if len(s) == 0:
+            return pd.Series([], dtype=int), []
+
+        if method == "quantile":
+            try:
+                binned = pd.qcut(
+                    series, q=n_bins, labels=False, duplicates="drop"
+                )
+            except Exception:
+                # fallback to equal-width
+                binned = pd.cut(series, bins=n_bins, labels=False)
+        elif method == "fixed":
+            # compute fixed width bins from min to max; start at 0 if min >= 0 and min is small
+            minv = float(s.min())
+            maxv = float(s.max())
+            if np.isclose(minv, maxv):
+                # degenerate series: single bin
+                binned = pd.Series(0, index=series.index)
+                labels = [(minv, maxv)]
+                return binned, labels
+            # ensure bins include the maximum value and optionally start at 0
+            left = 0.0 if minv >= 0.0 else minv
+            # make the right-most edge slightly above maxv to ensure inclusion
+            max_edge = np.nextafter(maxv, np.inf)
+            edges = np.linspace(left, max_edge, n_bins + 1)
+            # pd.cut expects monotonically increasing edges
+            binned = pd.cut(
+                series, bins=edges, labels=False, include_lowest=True
+            )
+        else:
+            raise ValueError(
+                "Unsupported binning method. Choose 'quantile' or 'fixed'."
+            )
+
+        # build labels for bins that actually appear
+        labels = []
+        if len(binned) == 0 or binned.isna().all():
+            return binned, labels
+        max_bin = int(binned.dropna().max())
+        for i in range(max_bin + 1):
+            minv = series[binned == i].min()
+            maxv = series[binned == i].max()
+            labels.append((minv, maxv))
+        return binned, labels
+
+    # color-coded scatter (Actual vs Predicted)
+    if color_series is None or color_series.dropna().empty:
+        axes[1].scatter(pred_df["true_value"], pred_df["prediction"], alpha=0.5)
+    else:
+        df_plot = pred_df[["true_value", "prediction"]].copy()
+        df_plot["_color_val"] = color_series
+        df_plot = df_plot.dropna(
+            subset=["true_value", "prediction", "_color_val"]
+        )
+        if len(df_plot) == 0:
+            axes[1].scatter(
+                pred_df["true_value"], pred_df["prediction"], alpha=0.5
+            )
+        else:
+            binned, labels = _make_binned_series(
+                df_plot["_color_val"], bins, method=binning
+            )
+            df_plot["_bin"] = binned
+            present_bins = sorted(
+                df_plot["_bin"].dropna().unique().astype(int).tolist()
+            )
+            if len(present_bins) == 0:
+                axes[1].scatter(
+                    pred_df["true_value"], pred_df["prediction"], alpha=0.5
+                )
+            else:
+                cmap_obj = plt.cm.get_cmap(cmap, len(present_bins))
+                colors = [cmap_obj(i) for i in range(len(present_bins))]
+                for bin_idx, color in zip(present_bins, colors):
+                    mask = df_plot["_bin"] == bin_idx
+                    if mask.any():
+                        axes[1].scatter(
+                            df_plot.loc[mask, "true_value"],
+                            df_plot.loc[mask, "prediction"],
+                            color=color,
+                            alpha=0.6,
+                            label=f"{labels[bin_idx][0]:.2f}–{labels[bin_idx][1]:.2f}",
+                        )
+            axes[1].legend(title=f"{color_by}", loc="best")
     lims = [
         np.min([axes[1].get_xlim(), axes[1].get_ylim()]),  # min of both axes
         np.max([axes[1].get_xlim(), axes[1].get_ylim()]),  # max of both axes
@@ -271,7 +426,41 @@ def plot_performance_diagnostics(pred_df: pd.DataFrame, dataset_name: str):
     axes[1].set_aspect("equal", adjustable="box")
 
     # 3. Residuals vs. Predicted
-    axes[2].scatter(pred_df["prediction"], pred_df["error"], alpha=0.5)
+    # Create residuals plot colored by the same series if available
+    if color_series is None or color_series.dropna().empty:
+        axes[2].scatter(pred_df["prediction"], pred_df["error"], alpha=0.5)
+    else:
+        df_plot2 = pred_df[["prediction", "error"]].copy()
+        df_plot2["_color_val"] = color_series
+        df_plot2 = df_plot2.dropna(subset=["prediction", "error", "_color_val"])
+        if len(df_plot2) == 0:
+            axes[2].scatter(pred_df["prediction"], pred_df["error"], alpha=0.5)
+        else:
+            binned2, labels2 = _make_binned_series(
+                df_plot2["_color_val"], bins, method=binning
+            )
+            df_plot2["_bin"] = binned2
+            present_bins2 = sorted(
+                df_plot2["_bin"].dropna().unique().astype(int).tolist()
+            )
+            if len(present_bins2) == 0:
+                axes[2].scatter(
+                    pred_df["prediction"], pred_df["error"], alpha=0.5
+                )
+            else:
+                cmap_obj2 = plt.cm.get_cmap(cmap, len(present_bins2))
+                colors2 = [cmap_obj2(i) for i in range(len(present_bins2))]
+                for bin_idx, color in zip(present_bins2, colors2):
+                    mask = df_plot2["_bin"] == bin_idx
+                    if mask.any():
+                        axes[2].scatter(
+                            df_plot2.loc[mask, "prediction"],
+                            df_plot2.loc[mask, "error"],
+                            color=color,
+                            alpha=0.6,
+                            label=f"{labels2[bin_idx][0]:.2f}–{labels2[bin_idx][1]:.2f}",
+                        )
+            axes[2].legend(title=f"{color_by}", loc="best")
     axes[2].axhline(y=0, color="r", linestyle="--")
     axes[2].set_xlabel("Predicted Values")
     axes[2].set_ylabel("Error (Residuals)")
@@ -315,7 +504,10 @@ def plot_predictions(
     # structure: network_dir / scenarios_sta_results / scenario_name / scenario_name.parquet
     network_dir = dataset.network_dir
     link_data_file = (
-        network_dir / "scenarios_sta_results" / scenario_name / f"{scenario_name}.parquet"
+        network_dir
+        / "scenarios_sta_results"
+        / scenario_name
+        / f"{scenario_name}.parquet"
     )
     if not link_data_file.exists():
         raise FileNotFoundError(f"Link data file not found at {link_data_file}")
@@ -345,13 +537,19 @@ def plot_predictions(
     fig, axes = plt.subplots(2, 3, figsize=(20, 13), sharex=True, sharey=True)
 
     # plot both directions
-    for row_idx, (direction, gdf_subset) in enumerate([(0, gdf_dir0), (1, gdf_dir1)]):
+    for row_idx, (direction, gdf_subset) in enumerate(
+        [(0, gdf_dir0), (1, gdf_dir1)]
+    ):
         if len(gdf_subset) == 0:
             continue
 
         # plot actual flow
         gdf_subset.plot(
-            column="actual_flow", ax=axes[row_idx, 0], legend=True, vmin=vmin_flow, vmax=vmax_flow
+            column="actual_flow",
+            ax=axes[row_idx, 0],
+            legend=True,
+            vmin=vmin_flow,
+            vmax=vmax_flow,
         )
         axes[row_idx, 0].set_title(f"Actual Flow - Direction {direction}")
 
@@ -380,7 +578,9 @@ def plot_predictions(
         min_error = gdf_subset["error"].min()
         max_error = gdf_subset["error"].max()
         avg_error = gdf_subset["error"].mean()
-        textstr = f"Min: {min_error:.2f}\nMax: {max_error:.2f}\nAvg: {avg_error:.2f}"
+        textstr = (
+            f"Min: {min_error:.2f}\nMax: {max_error:.2f}\nAvg: {avg_error:.2f}"
+        )
         props = dict(boxstyle="round", facecolor="wheat", alpha=0.5)
         axes[row_idx, 2].text(
             0.5,
@@ -393,7 +593,9 @@ def plot_predictions(
             bbox=props,
         )
 
-    fig.suptitle(f"Dataset: {dataset_name}\nScenario: {scenario_name}\n", fontsize=16)
+    fig.suptitle(
+        f"Dataset: {dataset_name}\nScenario: {scenario_name}\n", fontsize=16
+    )
     plt.tight_layout()
 
     # only show plot in interactive mode
@@ -401,3 +603,192 @@ def plot_predictions(
         plt.show()
 
     return fig
+
+
+def plot_splits_diversity(
+    splits_dict: DatasetSplit, plot: bool = True, min_flow_thresh: float = 10.0
+):
+    """
+    Analyzes diversity across splits filtering out low-flow links to avoid numerical noise.
+
+    Args:
+        splits_dict: Dictionary containing 'train', 'val', 'test' datasets.
+        min_flow_thresh: Links with mean flow < this value are ignored in Flow CV analysis.
+        plot: Whether to generate plots.
+    """
+
+    plot_data = {
+        "caps": {},
+        "demands": {},
+        "link_cv_cap": {},
+        "link_cv_flow": {},
+    }
+    colors = {"train": "steelblue", "val": "orange", "test": "green"}
+
+    for split_name in ["train", "val", "test"]:
+        dataset = splits_dict[split_name]
+        print(
+            f"\n=== Analyzing Split: {split_name.upper()} ({len(dataset)} samples) ==="
+        )
+
+        if len(dataset) == 0:
+            continue
+
+        # Lists for accumulation
+        all_caps = []
+        all_demands = []
+        all_vc_ratios = []
+
+        # Histories for Link-wise CV
+        history_caps = []
+        history_flows = []
+
+        for data in dataset:
+            # Extraction
+            cap = data["_raw"].edge_capacity
+            demand = data["_raw"].demand
+            flow = data.y  # Assumes data.y contains the flow (Ground Truth)
+
+            # Global Accumulation
+            all_caps.append(cap)
+            all_demands.append(demand)
+            all_vc_ratios.append(data["_raw"].edge_vcr + 1e-6)
+
+            # Local Accumulation
+            history_caps.append(cap.cpu().numpy())
+            history_flows.append(flow.cpu().numpy())
+
+        # --- Metrics Calculation ---
+        cat_caps = torch.cat(all_caps).float()
+        cat_demands = torch.cat(all_demands).float()
+        cat_vc = torch.cat(all_vc_ratios).float()
+
+        cv_cap = torch.std(cat_caps) / torch.mean(cat_caps)
+        cv_demand = torch.std(cat_demands) / torch.mean(cat_demands)
+        congested_pct = (cat_vc > 0.9).float().mean().item() * 100
+
+        print(f"  CV Capacity (Global): {cv_cap:.4f}")
+        print(f"  CV Demand (Global):   {cv_demand:.4f}")
+        print(f"  Congested (>0.9):     {congested_pct:.2f}%")
+
+        # --- Link-wise CV Calculation ---
+
+        # Helper function for CV calc
+        def calc_link_stats(history_list):
+            mat = np.stack(history_list)
+            if mat.ndim > 2:
+                mat = mat.reshape(mat.shape[0], -1)
+            means = np.mean(mat, axis=0)
+            stds = np.std(mat, axis=0)
+            return means, stds
+
+        means_cap, stds_cap = calc_link_stats(history_caps)
+        means_flow, stds_flow = calc_link_stats(history_flows)
+
+        # 1. Raw CV Calculation
+        link_cv_cap = np.divide(
+            stds_cap,
+            means_cap,
+            out=np.zeros_like(stds_cap),
+            where=means_cap != 0,
+        )
+        link_cv_flow = np.divide(
+            stds_flow,
+            means_flow,
+            out=np.zeros_like(stds_flow),
+            where=means_flow != 0,
+        )
+
+        # 2. APPLY FILTER (Mask)
+        # Keep only links with mean flow > threshold to avoid denominator explosion
+        valid_flow_mask = means_flow > min_flow_thresh
+        filtered_cv_flow = link_cv_flow[valid_flow_mask]
+
+        # Stats for the filtered data
+        n_total = len(link_cv_flow)
+        n_kept = len(filtered_cv_flow)
+        print(
+            f"  Filtering Noise (Mean Flow < {min_flow_thresh}): Kept {n_kept}/{n_total} links"
+        )
+
+        avg_link_cv_cap = np.mean(link_cv_cap)
+        avg_link_cv_flow = np.mean(filtered_cv_flow) if n_kept > 0 else 0.0
+
+        print(f"  Avg Link-wise CV (Capacity): {avg_link_cv_cap:.4f}")
+        print(f"  Avg Link-wise CV (Flow, Filtered): {avg_link_cv_flow:.4f}")
+
+        # Store for plotting
+        plot_data["caps"][split_name] = cat_caps.cpu().numpy().flatten()
+        plot_data["demands"][split_name] = cat_demands.cpu().numpy().flatten()
+        plot_data["link_cv_cap"][split_name] = link_cv_cap.flatten()
+        # Store FILTERED flow CV for plotting
+        plot_data["link_cv_flow"][split_name] = filtered_cv_flow
+
+    if plot:
+        fig, axs = plt.subplots(
+            1, 4, figsize=(24, 6)
+        )  # Aumento un po' l'altezza
+
+        # Iteriamo sugli assi per applicare stili comuni
+        titles = [
+            "Capacity Distribution (Density)",
+            "Centroid Demand Distribution (>0)",
+            "Link-wise Capacity CV",
+            f"Link-wise Flow CV (Flow > {min_flow_thresh})",  # Updated Title
+        ]
+
+        keys = ["caps", "demands", "link_cv_cap", "link_cv_flow"]
+
+        for i, ax in enumerate(axs):
+            key = keys[i]
+
+            for split_name in ["train", "val", "test"]:
+                # Recupero dati
+                data = plot_data[key].get(split_name, [])
+                if len(data) == 0:
+                    continue
+
+                # Filtro speciale per la domanda (solo > 0)
+                if key == "demands":
+                    data = data[data > 1e-6]
+
+                c = colors.get(split_name, "blue")
+
+                # --- MODIFICA CHIAVE: histtype='step' e linewidth ---
+                # density=True mantiene la normalizzazione
+                ax.hist(
+                    data,
+                    bins=50,
+                    label=split_name,
+                    density=True,
+                    color=c,
+                    histtype="step",
+                    linewidth=2,
+                )
+
+            ax.set_title(titles[i], fontsize=12, fontweight="bold")
+            ax.grid(True, alpha=0.2, linestyle="--")
+            ax.legend()
+
+            # --- MODIFICA CHIAVE: Scala Logaritmica dove serve ---
+            if key in ["demands", "link_cv_flow"]:
+                ax.set_yscale("log")
+                ax.set_ylabel("Density (Log Scale)")
+            else:
+                ax.set_ylabel("Density")
+
+            # Soglie visive
+            if key == "link_cv_cap":
+                ax.axvline(
+                    0.1, color="r", linestyle="--", label="Threshold", alpha=0.5
+                )
+                ax.set_xlabel("CV (Input)")
+            elif key == "link_cv_flow":
+                ax.axvline(
+                    0.1, color="r", linestyle="--", label="Threshold", alpha=0.5
+                )
+                ax.set_xlabel("CV (Target)")
+
+        plt.tight_layout()
+        plt.show()
+        return fig
