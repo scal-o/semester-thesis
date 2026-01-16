@@ -1,31 +1,29 @@
-model:
-    name: "HetGAT_no_preproc_sioux_falls"
-
-training:
-    epochs: 10
-    batch_size: 32
-    target:
-        pre:
-        - builder: "target_vcr"
-        post:
-        # - scaler:
-        #     target: "y"
-        #     transform: "minmax"
-        #     factor: 100
-
-
-optimizer:
-    type: "adam"
-    learning_rate: 1.0e-3
-
-scheduler:
-    type: "reduce_on_plateau"
-    factor: 0.5
-    patience: 10
-
-loss:
-    type: "mse"
-
 dataset:
-    name: "sioux_falls"
-    path: "data"
+  name: chicago_LM_lhs
+  path: data
+early_stopping:
+  enabled: true
+  mode: min
+  patience: 50
+loss:
+  type: custom
+  w_conservation: 0
+  w_flow: 0.003
+model:
+  name: linear_init
+optimizer:
+  type: adam
+scheduler:
+  type: reduce_on_plateau
+training:
+  batch_size: 12
+  epochs: 700
+  seed: 999
+  target:
+    post:
+    - scaler:
+        factor: 1
+        target: y
+        transform: minmax
+    pre:
+    - builder: target_vcr

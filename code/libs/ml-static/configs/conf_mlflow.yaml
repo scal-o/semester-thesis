@@ -1,2 +1,4 @@
-tracking_uri: http://192.168.178.73:5000
-experiment: "New refactoring testing"
+# tracking_uri: http://192.168.178.73:5000
+tracking_uri: http://localhost:5000
+experiment: "Node initialization"
+# experiment: "HtGAT Experiments - LM dataset"
