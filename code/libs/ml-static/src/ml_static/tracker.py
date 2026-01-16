@@ -297,7 +297,7 @@ class MLflowtracker:
             torch.save(checkpoint, tempdir / "model.pt")
 
             # save model summary
-            with open(tempdir / "model_summary.txt", "w") as f:
+            with open(tempdir / "model_summary.txt", "w", encoding="utf-8") as f:
                 model_summary = torch_geometric.nn.summary(model, data)
                 f.write(model_summary)
 
@@ -340,7 +340,7 @@ class MLflowtracker:
         # log statistics df
         with tempfile.TemporaryDirectory() as dirname:
             tempdir = Path(dirname)
-            with open(tempdir / "training_stats.txt", "w") as f:
+            with open(tempdir / "training_stats.txt", "w", encoding="utf-8") as f:
                 stats = tabulate(stats_dfs, headers="keys", tablefmt="psql")
                 f.write(stats)
             tmp = str((tempdir / "training_stats.txt").absolute())
