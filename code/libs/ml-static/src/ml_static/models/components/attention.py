@@ -184,7 +184,7 @@ class BaseDependentAttentionLayer(nn.Module):
             self.num_heads,
             self.head_dim,
             device=x.device,
-            dtype=x.dtype,
+            dtype=weighted_values.dtype,
         )
         values.index_add_(0, origin, weighted_values)
 
