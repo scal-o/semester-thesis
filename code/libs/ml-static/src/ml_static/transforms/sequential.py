@@ -133,3 +133,7 @@ class SequentialTransform(BaseTransform):
             return x
 
         return transform.inverse_transform(x)
+
+    def __repr__(self) -> str:
+        transforms_str = ",\n  ".join([str(t) for t in self.transforms])
+        return f"{self.__class__.__name__}([\n  {transforms_str}\n])"

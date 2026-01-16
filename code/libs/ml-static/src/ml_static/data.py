@@ -231,6 +231,35 @@ class STADataset(Dataset):
         # create pre-transform from config
         pre_transform = SequentialTransform.from_config(config, stage="pre")
 
+        # if force reload is set to false, check for pre-transform consistency and
+        # force the reload anyway in case of mismatches
+        if not force_reload:
+            # path to the pre_transform repr
+            pre_transform_path = (
+                config.dataset.full_path
+                / "scenarios_sta_mldata"
+                / f"processed_{model_name}"
+                / "pre_transform.pt"
+            )
+
+            # generate the current representation
+            current_repr = str(pre_transform)
+
+            # check for mismatch
+            if pre_transform_path.exists():
+                try:
+                    saved_transform = torch.load(pre_transform_path, weights_only=False)
+                    saved_repr = str(saved_transform)
+
+                    if saved_repr != current_repr:
+                        print(
+                            f"Pre-transform change detected.\nSaved: {saved_repr}\nCurrent: {current_repr}\nTriggering reload..."
+                        )
+                        force_reload = True
+                except Exception as e:
+                    print(f"Could not load existing pre-transform: {e}. Triggering reload...")
+                    force_reload = True
+
         # if force_reload is true, force reloading of the basedataset as well
         if force_reload:
             print("Forcing dataset reload...")
@@ -574,7 +603,7 @@ class BaseDataset(Dataset):
             # scale down od matrix to trips in peak hour (from trips per day)
             od_mat = od_mat / 10
 
-            # get full od matrix (od_mat only contains centrid data)
+            # get full od matrix (od_mat only contains centroid data)
             full_mat = pd.DataFrame(od_mat)
             full_mat = full_mat.reindex(
                 index=range(0, len(node_df)),

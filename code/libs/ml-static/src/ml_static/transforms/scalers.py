@@ -305,3 +305,6 @@ class ScalerTransform(BaseScaler, BaseTransform):
         else:
             type_spec, feature_name = self.target
             data[type_spec][feature_name] = value
+
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}(target={self.target}, transform_type="{self.transform_type}", kwargs={self.kwargs})'
