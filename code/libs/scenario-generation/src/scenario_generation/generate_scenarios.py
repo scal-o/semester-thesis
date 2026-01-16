@@ -76,7 +76,7 @@ def modify_od_uniform(x: pd.Series) -> pd.Series:
         A pd.Series with the modified and rounded demand values.
     """
     factors = np.random.uniform(0.5, 1.5, size=len(x))
-    return (x * factors).round(0).astype(int)
+    return np.ceil(x * factors).astype(int)
 
 
 class LatinHypercubeSampler:
@@ -356,7 +356,8 @@ class ScenarioGenerator:
 
         # Run with or without multiprocessing
         if multiprocess:
-            num_processes = min(11, len(scenario_ids))
+            num_processes = cpu_count()
+            num_processes = min(num_processes - 2, len(scenario_ids))
             print(f"Using {num_processes} parallel processes...")
 
             with Pool(processes=num_processes) as pool:
@@ -410,7 +411,6 @@ class ScenarioGenerator:
     show_default=True,
     help="Use multiprocessing for parallel scenario generation.",
 )
-
 def generate_scenarios(
     network: str,
     path: Optional[str] = None,

@@ -113,7 +113,7 @@ def convert_to_omx(
 
     # create process pool
     if processes is None:
-        processes = cpu_count()
+        processes = cpu_count() - 2
 
     with Pool(processes=processes) as pool:
         results = list(

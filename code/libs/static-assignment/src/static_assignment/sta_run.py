@@ -2,7 +2,7 @@ import io
 import logging
 from contextlib import redirect_stderr
 from functools import partial
-from multiprocessing import Pool
+from multiprocessing import Pool, cpu_count
 from pathlib import Path
 
 import click
@@ -250,8 +250,9 @@ def run_sta(
         block_centroid_flows=CENTROID_FLOW_BLOCKING.get(network, False),
     )
 
-    # run simulation in parallel with max 10 processes
-    num_processes = min(11, len(scenario_names))
+    # run simulation in parallel with max processes = num cores - 2
+    num_processes = cpu_count() - 2
+    num_processes = min(num_processes, len(scenario_names))
     print(f"Using {num_processes} parallel processes...")
 
     with Pool(processes=num_processes) as pool:
