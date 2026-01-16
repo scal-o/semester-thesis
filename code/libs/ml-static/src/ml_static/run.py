@@ -33,7 +33,13 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
     """
 
     # set device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+
+    print("Using device:", device)
 
     # set seed
     seed = config.training.seed if config.training.seed is not None else random.randint(0, 10000)

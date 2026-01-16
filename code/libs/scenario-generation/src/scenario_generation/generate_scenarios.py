@@ -6,7 +6,7 @@ generates N scenario .gpkg files using a ScenarioGenerator class.
 """
 
 from functools import partial
-from multiprocessing import Pool
+from multiprocessing import Pool, cpu_count
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
@@ -125,13 +125,19 @@ class LatinHypercubeSampler:
 
         self._matrix = mat
 
-    def __call__(self, x: pd.Series) -> pd.Series:
+    def __call__(self, x: pd.Series, scenario_idx: int = None) -> pd.Series:
         """Return a new vector of sampled weights multiplied with `x`.
 
         The method will lazily initialize the internal LHS matrix if not already
         created, using the length of `x` as the sample size.
-        It advances an internal index and returns the row at that index. The
-        index wraps around once it reaches the end of the matrix.
+
+        Args:
+            x: The series to apply weights to
+            scenario_idx: The scenario index to use for sampling. If None, uses
+                internal state (for backwards compatibility, but not safe for multiprocessing).
+
+        Returns:
+            A series with weights applied
         """
         if self._matrix is None or self._sample_size != len(x):
             # initialize or re-initialize matrix based on incoming size
@@ -139,10 +145,16 @@ class LatinHypercubeSampler:
 
         assert self._matrix is not None
 
-        weights = self._matrix[self._index, :]
-        self._index += 1
-        if self._index >= self._n_rows:
-            self._index = 0
+        # Use explicit scenario_idx if provided, otherwise use internal state
+        if scenario_idx is not None:
+            idx = scenario_idx % self._n_rows
+        else:
+            idx = self._index
+            self._index += 1
+            if self._index >= self._n_rows:
+                self._index = 0
+
+        weights = self._matrix[idx, :]
 
         # apply weights
         result = x * weights
@@ -287,7 +299,7 @@ class ScenarioGenerator:
                     and mod_function is modify_capacity_lhs
                     and capacity_sampler is not None
                 ):
-                    mod_links_gdf[attribute] = capacity_sampler(original_series)
+                    mod_links_gdf[attribute] = capacity_sampler(original_series, scenario_seed)
                 else:
                     mod_links_gdf[attribute] = mod_function(original_series)
 
@@ -356,8 +368,8 @@ class ScenarioGenerator:
 
         # Run with or without multiprocessing
         if multiprocess:
-            num_processes = cpu_count()
-            num_processes = min(num_processes - 2, len(scenario_ids))
+            num_processes = cpu_count() - 2
+            num_processes = min(num_processes, len(scenario_ids))
             print(f"Using {num_processes} parallel processes...")
 
             with Pool(processes=num_processes) as pool:
@@ -371,7 +383,9 @@ class ScenarioGenerator:
         else:
             print("Running sequentially (single process)...")
             results = []
-            for scenario_id in tqdm(scenario_ids, total=len(scenario_ids), desc="Generating Scenarios"):
+            for scenario_id in tqdm(
+                scenario_ids, total=len(scenario_ids), desc="Generating Scenarios"
+            ):
                 result = worker_func(scenario_id)
                 results.append(result)
 
