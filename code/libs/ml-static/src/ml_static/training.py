@@ -4,9 +4,13 @@ from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
+from torch import autocast
+from torch.amp import GradScaler
 
 if TYPE_CHECKING:
     from ml_static.losses import LossWrapper
+
+SCALER = GradScaler()
 
 
 def train(
@@ -14,6 +18,7 @@ def train(
     optimizer: torch.optim.Optimizer,
     criterion: LossWrapper,
     graph,
+    device: torch.device,
 ) -> tuple[float, dict]:
     """
     Perform a single training step.
@@ -23,17 +28,24 @@ def train(
         optimizer: The optimizer for updating model parameters.
         criterion: The loss function.
         graph: A batch of graph data.
+        device: Device to run computations on.
 
     Returns:
         Tuple of (training loss, loss components dict).
     """
-    model.train()
-    optimizer.zero_grad()
+    if device.type != "cuda":
+        raise RuntimeError(f"AMP training requires a CUDA device; got '{device.type}'.")
 
-    pred = model(graph)
-    loss, loss_components = criterion(pred, graph)
-    loss.backward()
-    optimizer.step()
+    model.train()
+    optimizer.zero_grad(set_to_none=True)
+
+    with autocast(device_type=device.type, dtype=torch.float16):
+        pred = model(graph)
+        loss, loss_components = criterion(pred, graph)
+
+    SCALER.scale(loss).backward()
+    SCALER.step(optimizer)
+    SCALER.update()
 
     return loss.item(), loss_components
 
@@ -42,6 +54,7 @@ def validate(
     model: nn.Module,
     criterion: LossWrapper,
     graph,
+    device: torch.device,
 ) -> tuple[float, dict]:
     """
     Perform validation on a batch of graph data.
@@ -50,14 +63,19 @@ def validate(
         model: The neural network model to validate.
         criterion: The loss function.
         graph: A batch of graph data.
+        device: Device to run computations on.
 
     Returns:
         Tuple of (validation loss, loss components dict).
     """
+    if device.type != "cuda":
+        raise RuntimeError(f"AMP evaluation requires a CUDA device; got '{device.type}'.")
+
     model.eval()
     with torch.no_grad():
-        pred = model(graph)
-        loss, loss_components = criterion(pred, graph)
+        with autocast(device_type=device.type, dtype=torch.float16):
+            pred = model(graph)
+            loss, loss_components = criterion(pred, graph)
 
     return loss.item(), loss_components
 
@@ -95,7 +113,7 @@ def run_epoch(
 
     for data in train_loader:
         data = data.to(device)
-        train_loss, train_components = train(model, optimizer, loss, data)
+        train_loss, train_components = train(model, optimizer, loss, data, device)
 
         e_train_loss += train_loss
         train_batches += 1
@@ -108,7 +126,7 @@ def run_epoch(
 
     for data in val_loader:
         data = data.to(device)
-        val_loss, val_components = validate(model, loss, data)
+        val_loss, val_components = validate(model, loss, data, device)
         e_val_loss += val_loss
         val_batches += 1
 
@@ -155,7 +173,7 @@ def run_test(
 
     for data in test_loader:
         data = data.to(device)
-        loss_out, _ = validate(model, loss, data)
+        loss_out, _ = validate(model, loss, data, device)
         test_loss += loss_out
         test_batches += 1
 

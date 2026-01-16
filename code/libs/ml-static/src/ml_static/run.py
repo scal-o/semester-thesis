@@ -52,6 +52,8 @@ def run_training(config: Config, check_run: bool = False) -> tuple:
     train_loader = DataLoader(
         dataset_split["train"],
         batch_size=config.training.batch_size,
+        num_workers=4,
+        pin_memory=True,
         shuffle=True,
     )
     val_loader = DataLoader(
